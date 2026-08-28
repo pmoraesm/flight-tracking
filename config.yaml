@@ -43,11 +43,3 @@ results_per_query: 3
 
 # Scheduler interval in minutes
 interval_minutes: 60
-
-# InfluxDB v1 (optional — remove block to disable)
-influxdb:
-  host: "a0d7b954-influxdb"
-  port: 8086
-  database: "flight_tracker"
-  username: "flighttracker"
-  password: "flighttracker"

@@ -1,0 +1,14 @@
+services:
+  flight-tracker:
+    build: .
+    container_name: flight-tracker
+    restart: unless-stopped
+    network_mode: bridge
+    env_file:
+      - .env
+    volumes:
+      - flight-data:/data
+      - ./config.yaml:/app/config.yaml
+
+volumes:
+  flight-data:

@@ -8,12 +8,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source
 COPY *.py ./
-COPY run.sh .
-RUN chmod +x run.sh
+COPY config.yaml .
 
-# Persistent data lives in /data (mounted by HA)
+# Persistent data lives in /data
 VOLUME ["/data"]
 
 ENV FLIGHT_DB_PATH=/data/prices.db
 
-CMD ["/app/run.sh"]
+CMD ["python3", "main.py"]

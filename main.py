@@ -10,7 +10,8 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from tracker import search_flights
 from display import console, print_results, print_alerts
 from notifier import is_configured, notify_alerts, notify_summary
-from influxdb_writer import write_results
+from storage import write_results
+import telegram_commands
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,6 +53,8 @@ def main() -> None:
 
     config = load_config()
     interval = config.get("interval_minutes", 60)
+
+    telegram_commands.start()
 
     # Run immediately on startup
     run_check()
