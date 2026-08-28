@@ -25,10 +25,13 @@ CREATE TABLE IF NOT EXISTS prices (
     stops       INTEGER,
     price       TEXT,
     price_value REAL,
-    is_best     INTEGER
+    is_best     INTEGER,
+    trip_id     INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_prices_lookup
     ON prices(origin, depart_date, return_date);
+CREATE INDEX IF NOT EXISTS idx_prices_trip
+    ON prices(trip_id);
 """
 
 _initialized = False
@@ -44,7 +47,7 @@ def _get_connection() -> sqlite3.Connection:
     return conn
 
 
-def write_results(results: list[dict], config: dict) -> None:
+def write_results(results: list[dict], trip_id: int) -> None:
     if not results:
         return
 
@@ -65,6 +68,7 @@ def write_results(results: list[dict], config: dict) -> None:
             r.get("price"),
             float(r["price_value"]),
             int(r.get("is_best", False)),
+            trip_id,
         )
         for r in results
     ]
@@ -76,8 +80,8 @@ def write_results(results: list[dict], config: dict) -> None:
             INSERT INTO prices (
                 checked_at, origin, destination, depart_date, return_date,
                 airline, departure, arrival, duration, stops,
-                price, price_value, is_best
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                price, price_value, is_best, trip_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
