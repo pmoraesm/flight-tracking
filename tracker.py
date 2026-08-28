@@ -132,93 +132,93 @@ def _build_flights_url(origins: str, destination: str, depart_date: str, return_
     return f"https://www.google.com/travel/flights?tfs={tfs_b64}"
 
 
-def search_flights(config: dict):
+def search_flights(trip: dict):
     """
-    Search all origin × depart_date × return_date combinations.
-    Yields lists of result dicts one combo at a time.
+    Search all origin × destination × depart_date × return_date combinations
+    for a single (already default-merged) trip record. Yields lists of
+    result dicts one combo at a time.
     """
-    destination = config["destination"]
-    origins = config["origins"]
-    seat = config.get("seat", "economy")
-    results_per_query = config.get("results_per_query", 3)
+    destinations = trip["destinations"]
+    origins = trip["origins"]
+    seat = trip.get("seat", "economy")
+    results_per_query = trip.get("results_per_query", 3)
 
-    pax_cfg = config.get("passengers", {})
+    pax_cfg = trip.get("passengers", {})
     passengers = Passengers(
         adults=pax_cfg.get("adults", 1),
         children=pax_cfg.get("children", 0),
     )
 
-    max_duration_hours = config.get("max_duration_hours", 0)
+    max_duration_hours = trip.get("max_duration_hours", 0)
     depart_dates = _date_range(
-        config["ideal_date"],
-        config.get("departure_range_before", 3),
-        config.get("departure_range_after", 3),
+        trip["ideal_date"],
+        trip.get("departure_range_before", 3),
+        trip.get("departure_range_after", 3),
     )
     return_dates = _date_range(
-        config["ideal_return_date"],
-        config.get("return_range_before", 3),
-        config.get("return_range_after", 3),
+        trip["ideal_return_date"],
+        trip.get("return_range_before", 3),
+        trip.get("return_range_after", 3),
     )
 
     for origin in origins:
-        for depart_date in depart_dates:
-            for return_date in return_dates:
-                combo_label = f"{origin} {depart_date} → {destination} / back {return_date}"
-                try:
-                    result = get_flights(
-                        flight_data=[
-                            FlightData(
-                                date=depart_date,
-                                from_airport=origin,
-                                to_airport=destination,
-                            ),
-                            FlightData(
-                                date=return_date,
-                                from_airport=destination,
-                                to_airport=origin,
-                            ),
-                        ],
-                        trip="round-trip",
-                        seat=seat,
-                        passengers=passengers,
-                    )
+        for destination in destinations:
+            for depart_date in depart_dates:
+                for return_date in return_dates:
+                    combo_label = f"{origin} {depart_date} → {destination} / back {return_date}"
+                    try:
+                        result = get_flights(
+                            flight_data=[
+                                FlightData(
+                                    date=depart_date,
+                                    from_airport=origin,
+                                    to_airport=destination,
+                                ),
+                                FlightData(
+                                    date=return_date,
+                                    from_airport=destination,
+                                    to_airport=origin,
+                                ),
+                            ],
+                            trip="round-trip",
+                            seat=seat,
+                            passengers=passengers,
+                        )
 
-                    # Filter out toggle/placeholder items injected by Google (price=0)
-                    flights = [f for f in result.flights if _parse_price(f.price) > 0]
+                        flights = [f for f in result.flights if _parse_price(f.price) > 0]
 
-                    if max_duration_hours:
-                        flights = [
-                            f for f in flights
-                            if _parse_duration_hours(f.duration) <= max_duration_hours
+                        if max_duration_hours:
+                            flights = [
+                                f for f in flights
+                                if _parse_duration_hours(f.duration) <= max_duration_hours
+                            ]
+                        flights = sorted(flights, key=lambda f: _parse_price(f.price))[:results_per_query]
+
+                        url = _build_flights_url(origin, destination, depart_date, return_date, passengers, seat)
+                        combo_results = [
+                            {
+                                "origin": origin,
+                                "destination": destination,
+                                "depart_date": depart_date,
+                                "return_date": return_date,
+                                "airline": flight.name,
+                                "departure": flight.departure,
+                                "arrival": flight.arrival,
+                                "duration": flight.duration,
+                                "stops": flight.stops,
+                                "price": flight.price,
+                                "price_value": _parse_price(flight.price),
+                                "is_best": flight.is_best,
+                                "current_price_level": result.current_price,
+                                "url": url,
+                            }
+                            for flight in flights
                         ]
-                    flights = sorted(flights, key=lambda f: _parse_price(f.price))[:results_per_query]
 
-                    url = _build_flights_url(origin, destination, depart_date, return_date, passengers, seat)
-                    combo_results = [
-                        {
-                            "origin": origin,
-                            "destination": destination,
-                            "depart_date": depart_date,
-                            "return_date": return_date,
-                            "airline": flight.name,
-                            "departure": flight.departure,
-                            "arrival": flight.arrival,
-                            "duration": flight.duration,
-                            "stops": flight.stops,
-                            "price": flight.price,
-                            "price_value": _parse_price(flight.price),
-                            "is_best": flight.is_best,
-                            "current_price_level": result.current_price,
-                            "url": url,
-                        }
-                        for flight in flights
-                    ]
+                        logger.info("OK  %s — %d flights found", combo_label, len(combo_results))
+                        yield combo_results
 
-                    logger.info("OK  %s — %d flights found", combo_label, len(combo_results))
-                    yield combo_results
+                    except Exception as exc:
+                        logger.warning("SKIP %s — %s", combo_label, exc)
 
-                except Exception as exc:
-                    logger.warning("SKIP %s — %s", combo_label, exc)
-
-                # Randomized delay to avoid bot detection
-                time.sleep(random.uniform(3, 9))
+                    time.sleep(random.uniform(3, 9))
