@@ -17,6 +17,7 @@ from pathlib import Path
 import requests
 from ruamel.yaml import YAML
 
+import deals
 import relay_client
 import trips
 from notifier import is_configured, send_message, _token, _chat_id
@@ -32,6 +33,8 @@ _yaml.preserve_quotes = True
 HELP_TEXT = (
     "*Flight Tracker commands*\n\n"
     "/new-trip — start tracking a new trip by describing it in plain language\n"
+    "/trips — list active trips and their cheapest price so far\n"
+    "/cancel-trip <id> — stop tracking a trip\n"
     "/set-config — change a shared setting by describing it in plain language\n"
     "/get — show current shared settings\n"
     "/cancel — cancel a pending /set-config or /new-trip\n"
@@ -194,6 +197,33 @@ def _handle_get() -> str:
     return _format_config(_load_config())
 
 
+def _handle_trips_list() -> str:
+    active = trips.get_active_trips()
+    if not active:
+        return "No active trips."
+
+    lines = []
+    for trip in active:
+        cheapest = deals.cheapest_price(trip["id"])
+        price_note = f"€{cheapest:.0f}" if cheapest is not None else "no data yet"
+        lines.append(
+            f"#{trip['id']} {trip['description']} — "
+            f"{trip['ideal_date']} to {trip['ideal_return_date']} — "
+            f"cheapest so far: {price_note}"
+        )
+    return "\n".join(lines)
+
+
+def _handle_cancel_trip(args: list) -> str:
+    if not args or not args[0].isdigit():
+        return "Usage: /cancel-trip <id>"
+
+    trip_id = int(args[0])
+    if trips.cancel_trip(trip_id):
+        return f"Trip #{trip_id} cancelled."
+    return f"No active trip with id {trip_id}."
+
+
 def _handle_config_reply(text: str, session_id) -> tuple:
     """Returns (reply, still_pending, session_id)."""
     config = _load_config()
@@ -276,6 +306,14 @@ def _dispatch(chat_id, text: str) -> str:
     if command == "/get":
         _clear_pending(chat_id)
         return _handle_get()
+
+    if command == "/trips":
+        _clear_pending(chat_id)
+        return _handle_trips_list()
+
+    if command == "/cancel-trip":
+        _clear_pending(chat_id)
+        return _handle_cancel_trip(stripped.split()[1:])
 
     if command == "/set-config":
         _clear_pending(chat_id)

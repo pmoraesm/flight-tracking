@@ -1,6 +1,7 @@
 import requests
 from unittest.mock import patch
 
+import deals
 import storage
 import trips
 import telegram_commands as tc
@@ -176,3 +177,63 @@ def test_new_trip_command_clears_a_pending_set_config():
 
     assert chat_id not in tc._pending_config
     assert chat_id in tc._pending_trip
+
+
+def test_trips_list_shows_no_active_trips_message(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(trips, "_initialized", False)
+
+    reply = tc._dispatch(3, "/trips")
+
+    assert reply == "No active trips."
+
+
+def test_trips_list_shows_cheapest_price(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(trips, "_initialized", False)
+
+    trip_id = trips.create_trip(
+        description="Beach getaway", destinations=["BKK"],
+        ideal_date="2026-12-05", ideal_return_date="2026-12-19",
+        departure_range_before=1, departure_range_after=1,
+        return_range_before=1, return_range_after=1,
+    )
+    storage.write_results([{
+        "origin": "AMS", "destination": "BKK", "depart_date": "2026-12-05",
+        "return_date": "2026-12-19", "price_value": 650.0, "price": "€650",
+    }], trip_id=trip_id)
+
+    reply = tc._dispatch(3, "/trips")
+
+    assert "Beach getaway" in reply
+    assert "€650" in reply
+
+
+def test_cancel_trip_marks_trip_cancelled(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(trips, "_initialized", False)
+
+    trip_id = trips.create_trip(
+        description="Beach getaway", destinations=["BKK"],
+        ideal_date="2026-12-05", ideal_return_date="2026-12-19",
+        departure_range_before=1, departure_range_after=1,
+        return_range_before=1, return_range_after=1,
+    )
+
+    reply = tc._dispatch(3, f"/cancel-trip {trip_id}")
+
+    assert f"Trip #{trip_id} cancelled" in reply
+    assert trips.get_active_trips() == []
+
+
+def test_cancel_trip_unknown_id():
+    reply = tc._dispatch(3, "/cancel-trip 999")
+    assert "No active trip" in reply
+
+
+def test_cancel_trip_missing_id():
+    reply = tc._dispatch(3, "/cancel-trip")
+    assert "Usage" in reply
