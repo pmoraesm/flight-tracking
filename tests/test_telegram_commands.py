@@ -1,11 +1,14 @@
 import requests
 from unittest.mock import patch
 
+import storage
+import trips
 import telegram_commands as tc
 
 
 def setup_function():
     tc._pending_config.clear()
+    tc._pending_trip.clear()
 
 
 def test_set_config_first_turn_sends_persona_and_context(tmp_path, monkeypatch):
@@ -101,3 +104,75 @@ def test_cancel_clears_pending_config():
 
     assert reply == "Cancelled."
     assert chat_id not in tc._pending_config
+
+
+def test_new_trip_shows_proposal_and_waits_for_confirmation():
+    chat_id = 2
+    tc._dispatch(chat_id, "/new-trip")
+
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": (
+            '{"description": "Beach getaway", "destinations": ["BKK", "HKT"], '
+            '"ideal_date": "2026-12-05", "ideal_return_date": "2026-12-19", '
+            '"departure_range_before": 3, "departure_range_after": 3, '
+            '"return_range_before": 3, "return_range_after": 3, '
+            '"baseline_price_estimate": 650}'
+        ),
+        "session_id": "sess-trip-1",
+    }):
+        reply = tc._dispatch(chat_id, "somewhere warm in SE Asia in December")
+
+    assert "BKK" in reply and "HKT" in reply
+    assert "yes" in reply.lower()
+    assert tc._pending_trip[chat_id]["proposal"]["description"] == "Beach getaway"
+
+
+def test_new_trip_confirmation_creates_trip(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(trips, "_initialized", False)
+
+    chat_id = 2
+    tc._pending_trip[chat_id] = {
+        "session_id": "sess-trip-1",
+        "proposal": {
+            "description": "Beach getaway", "destinations": ["BKK", "HKT"],
+            "ideal_date": "2026-12-05", "ideal_return_date": "2026-12-19",
+            "departure_range_before": 3, "departure_range_after": 3,
+            "return_range_before": 3, "return_range_after": 3,
+            "baseline_price_estimate": 650,
+        },
+    }
+
+    reply = tc._dispatch(chat_id, "yes")
+
+    assert "Beach getaway" in reply
+    assert chat_id not in tc._pending_trip
+    active = trips.get_active_trips()
+    assert len(active) == 1
+    assert active[0]["description"] == "Beach getaway"
+
+
+def test_new_trip_clarification_keeps_conversation_open():
+    chat_id = 2
+    tc._dispatch(chat_id, "/new-trip")
+
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": '{"clarification_needed": "Which month did you mean?"}',
+        "session_id": "sess-trip-1",
+    }):
+        reply = tc._dispatch(chat_id, "sometime next year")
+
+    assert reply == "Which month did you mean?"
+    assert chat_id in tc._pending_trip
+    assert tc._pending_trip[chat_id]["proposal"] is None
+
+
+def test_new_trip_command_clears_a_pending_set_config():
+    chat_id = 2
+    tc._pending_config[chat_id] = "some-session"
+
+    tc._dispatch(chat_id, "/new-trip")
+
+    assert chat_id not in tc._pending_config
+    assert chat_id in tc._pending_trip
