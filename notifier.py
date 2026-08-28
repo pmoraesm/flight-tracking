@@ -50,52 +50,43 @@ def send_message(text: str) -> bool:
         return False
 
 
-def notify_alerts(results: list[dict], config: dict) -> None:
-    """Send a Telegram message for each result below the price threshold."""
-    threshold = config.get("price_alert_threshold", 0)
-    if not threshold:
-        return
-
-    alerts = [r for r in results if r["price_value"] <= threshold]
-    if not alerts:
+def notify_alerts(good_deals: list) -> None:
+    """Send a Telegram message for each result flagged as a good deal."""
+    if not good_deals:
         return
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     lines = [f"✈️ *Flight Price Alert* — {now}\n"]
 
-    for a in sorted(alerts, key=lambda r: r["price_value"]):
+    for a in sorted(good_deals, key=lambda r: r["price_value"]):
         stops = "Direct" if a["stops"] == 0 else f"{a['stops']} stop(s)" if a["stops"] != "Unknown" else "? stops"
         link = f"\n  [Search on Google Flights]({a['url']})" if a.get("url") else ""
+        level = a.get("current_price_level")
+        level_note = f"\n  Google rates this: {level}" if level else ""
         lines.append(
+            f"*{a['trip_description']}*\n"
             f"*{a['price']}* — {a['origin']} → {a['destination']}\n"
             f"  Depart: {a['depart_date']}  |  Return: {a['return_date']}\n"
-            f"  {a['airline']}  |  {a['duration']}  |  {stops}{link}\n"
+            f"  {a['airline']}  |  {a['duration']}  |  {stops}{link}{level_note}\n"
         )
 
     send_message("\n".join(lines))
 
 
-def notify_summary(results: list[dict], config: dict) -> None:
-    """Send a brief summary of the cheapest find per origin."""
-    if not results:
+def notify_summary(trip_summaries: list) -> None:
+    """Send one line per active trip: its cheapest fare found this cycle."""
+    if not trip_summaries:
         return
-
-    # Best (cheapest) result per origin
-    best_by_origin: dict[str, dict] = {}
-    for r in results:
-        origin = r["origin"]
-        if origin not in best_by_origin or r["price_value"] < best_by_origin[origin]["price_value"]:
-            best_by_origin[origin] = r
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     lines = [f"🔍 *Flight Check* — {now}\n"]
 
-    for origin, r in sorted(best_by_origin.items(), key=lambda x: x[1]["price_value"]):
-        stops = "Direct" if r["stops"] == 0 else f"{r['stops']} stop(s)"
-        link = f" [↗]({r['url']})" if r.get("url") else ""
+    for t in sorted(trip_summaries, key=lambda r: r["price_value"]):
+        stops = "Direct" if t["stops"] == 0 else f"{t['stops']} stop(s)"
+        link = f" [↗]({t['url']})" if t.get("url") else ""
         lines.append(
-            f"*{origin}*: {r['price']} — {r['depart_date']} / back {r['return_date']} "
-            f"({r['airline']}, {stops}){link}"
+            f"*{t['trip_description']}*: {t['price']} — {t['origin']} → {t['destination']}, "
+            f"{t['depart_date']} / back {t['return_date']} ({t['airline']}, {stops}){link}"
         )
 
     send_message("\n".join(lines))
