@@ -229,7 +229,11 @@ def test_cancel_trip_marks_trip_cancelled(tmp_path, monkeypatch):
     assert trips.get_active_trips() == []
 
 
-def test_cancel_trip_unknown_id():
+def test_cancel_trip_unknown_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(trips, "_initialized", False)
+
     reply = tc._dispatch(3, "/cancel-trip 999")
     assert "No active trip" in reply
 
