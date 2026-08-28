@@ -1,17 +1,19 @@
 """Flight price tracker — entry point."""
 
 import logging
-import time
 from pathlib import Path
 
 import yaml
 from apscheduler.schedulers.blocking import BlockingScheduler
 
-from tracker import search_flights
-from display import console, print_results, print_alerts
-from notifier import is_configured, notify_alerts, notify_summary
-from storage import write_results
+import deals
+import storage
+import tracker
+import trips
 import telegram_commands
+from display import console
+import display
+from notifier import is_configured, notify_alerts, notify_summary
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,26 +34,52 @@ def run_check() -> None:
     config = load_config()
 
     console.print("\n[bold cyan]Starting price check…[/bold cyan]")
-    results = []
 
-    for combo in search_flights(config):
-        if combo:
-            results.extend(combo)
-            write_results(combo, config)
+    all_results = []
+    all_alerts = []
+    trip_summaries = []
 
-    print_results(results, config)
-    print_alerts(results, config)
+    for trip in trips.get_active_trips():
+        try:
+            merged = trips.merge_with_defaults(trip, config)
+            trip_results = []
+
+            for combo in tracker.search_flights(merged):
+                if not combo:
+                    continue
+                storage.write_results(combo, trip_id=trip["id"])
+
+                for result in combo:
+                    result["trip_description"] = trip["description"]
+                    result["is_good_deal"] = deals.is_good_deal(
+                        trip["id"], result["price_value"], trip["baseline_price_estimate"]
+                    )
+                    if result["is_good_deal"]:
+                        all_alerts.append(result)
+
+                trip_results.extend(combo)
+                all_results.extend(combo)
+
+            if trip_results:
+                cheapest = min(trip_results, key=lambda r: r["price_value"])
+                trip_summaries.append(cheapest)
+
+        except Exception as exc:
+            logger.error("Trip #%s (%s) failed: %s", trip["id"], trip["description"], exc)
+
+    display.print_results(all_results)
+    display.print_alerts(all_alerts)
 
     if is_configured():
-        notify_alerts(results, config)   # sends only if below threshold
-        notify_summary(results, config)  # sends best price per origin
+        notify_alerts(all_alerts)
+        notify_summary(trip_summaries)
 
 
 def main() -> None:
     console.print("[bold]Flight Tracker started.[/bold]")
     console.print(f"Config: [cyan]{CONFIG_PATH}[/cyan]")
 
-    config = load_config()
+    config = trips.migrate_config_file(CONFIG_PATH)
     interval = config.get("interval_minutes", 60)
 
     telegram_commands.start()
