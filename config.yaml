@@ -1,0 +1,53 @@
+# Flight Tracker Configuration
+
+destination: "GRU"          # IATA code of destination airport
+
+# Nearby origin airports to check
+origins:
+  - "AMS"   # Amsterdam Schiphol
+  - "BRU"   # Brussels
+  - "EIN"   # Eindhoven
+  - "RTM"   # Rotterdam
+  - "DUS"   # Düsseldorf
+  - "LGG"   # Liège
+
+# Ideal departure date (YYYY-MM-DD)
+ideal_date: "2026-07-11"
+
+# Ideal return date (YYYY-MM-DD)
+ideal_return_date: "2026-08-08"
+
+# Search windows (days before/after the ideal date)
+departure_range_before: 1
+departure_range_after: 2
+return_range_before: 3
+return_range_after: 7
+
+# Seat class: "economy", "premium-economy", "business", "first"
+seat: "economy"
+
+passengers:
+  adults: 2
+  children: 1       # child aged 2-11
+  child_age: 6
+
+# Alert when any result drops below this price (EUR or local currency)
+# Set to 0 to disable
+price_alert_threshold: 2500
+
+# Maximum total travel duration in hours (one-way leg) — set to 0 to disable
+max_duration_hours: 16
+
+# How many top results to store/display per origin+date combination
+results_per_query: 3
+
+# Scheduler interval in minutes
+interval_minutes: 60
+
+# InfluxDB v1 (optional — remove block to disable)
+influxdb:
+  host: "a0d7b954-influxdb"
+  port: 8086
+  database: "flight_tracker"
+  username: "flighttracker"
+  password: "flighttracker"
