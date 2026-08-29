@@ -177,16 +177,23 @@ def _parse_trip_request(text: str, session_id=None) -> tuple:
     return _relay_turn(text, full_prompt, _NEW_TRIP_TASK_PROMPT, session_id)
 
 
-def _format_proposal(proposal: dict) -> str:
+def _format_proposal(proposal: dict, config: dict) -> str:
     destinations = ", ".join(proposal["destinations"])
+    origins = proposal.get("origins")
+    if origins:
+        airports_line = f"Departure airports: {', '.join(origins)}"
+    else:
+        airports_line = (
+            f"Departure airports: {', '.join(config.get('origins', []))} "
+            "(from shared settings)"
+        )
     lines = [
         f"Destinations: {destinations}",
         f"Dates: {proposal['ideal_date']} to {proposal['ideal_return_date']} "
         f"(-{proposal['departure_range_before']}/+{proposal['departure_range_after']}d "
         f"departure, -{proposal['return_range_before']}/+{proposal['return_range_after']}d return)",
+        airports_line,
     ]
-    if proposal.get("origins"):
-        lines.append(f"Origins: {', '.join(proposal['origins'])}")
     if proposal.get("baseline_price_estimate"):
         lines.append(f"Est. fare: ~€{proposal['baseline_price_estimate']:.0f}")
     lines.append("Reply 'yes' to start tracking, or describe what to change.")
@@ -286,7 +293,7 @@ def _handle_new_trip_reply(chat_id, text: str) -> str:
         parsed.setdefault(field, 3)
 
     state["proposal"] = parsed
-    return _format_proposal(parsed)
+    return _format_proposal(parsed, _load_config())
 
 
 def _clear_pending(chat_id) -> None:

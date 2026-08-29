@@ -263,3 +263,33 @@ def test_cancel_trip_unknown_id(tmp_path, monkeypatch):
 def test_cancel_trip_missing_id():
     reply = tc._dispatch(3, "/cancel-trip")
     assert "Usage" in reply
+
+
+def test_format_proposal_shows_configured_origins_when_not_overridden():
+    proposal = {
+        "destinations": ["GRU"],
+        "ideal_date": "2026-12-14", "ideal_return_date": "2026-12-24",
+        "departure_range_before": 13, "departure_range_after": 17,
+        "return_range_before": 13, "return_range_after": 17,
+        "baseline_price_estimate": 750,
+    }
+    config = {"origins": ["AMS", "BRU", "EIN"]}
+
+    reply = tc._format_proposal(proposal, config)
+
+    assert "Departure airports: AMS, BRU, EIN (from shared settings)" in reply
+
+
+def test_format_proposal_shows_trip_specific_origins_when_set():
+    proposal = {
+        "destinations": ["GRU"], "origins": ["CDG", "ORY"],
+        "ideal_date": "2026-12-14", "ideal_return_date": "2026-12-24",
+        "departure_range_before": 13, "departure_range_after": 17,
+        "return_range_before": 13, "return_range_after": 17,
+    }
+    config = {"origins": ["AMS", "BRU", "EIN"]}
+
+    reply = tc._format_proposal(proposal, config)
+
+    assert "Departure airports: CDG, ORY" in reply
+    assert "from shared settings" not in reply
