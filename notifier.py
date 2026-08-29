@@ -27,6 +27,20 @@ def is_configured() -> bool:
     return bool(_token() and _chat_id())
 
 
+def escape_md(value) -> str:
+    """Escape characters that Telegram's legacy Markdown parser reads as formatting.
+
+    Apply this to any dynamic value (config keys, trip descriptions, error
+    text) before it goes into a message — an unescaped lone `_` or `*` in
+    such text leaves an unclosed entity and Telegram rejects the whole
+    message with a 400.
+    """
+    text = str(value)
+    for char in ("\\", "_", "*", "`", "["):
+        text = text.replace(char, "\\" + char)
+    return text
+
+
 def send_message(text: str) -> bool:
     """Send a plain or Markdown message to the configured Telegram chat."""
     token = _token()

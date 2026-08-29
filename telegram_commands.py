@@ -23,7 +23,7 @@ from ruamel.yaml import YAML
 import deals
 import relay_client
 import trips
-from notifier import is_configured, send_message, _token, _chat_id
+from notifier import is_configured, send_message, escape_md, _token, _chat_id
 
 logger = logging.getLogger(__name__)
 
@@ -92,14 +92,6 @@ _ROUTER_TASK_PROMPT = (
 _pending: dict = {}
 
 
-def escape_md(text) -> str:
-    """Escape characters Telegram's legacy Markdown parse mode treats as formatting."""
-    text = str(text)
-    for char in ("_", "*", "`", "["):
-        text = text.replace(char, f"\\{char}")
-    return text
-
-
 def _relay_turn(followup_prompt: str, full_prompt: str, task_prompt: str, session_id) -> tuple:
     """One turn of a relay conversation.
 
@@ -165,7 +157,7 @@ def _apply_changes(config, parsed: dict) -> list[str]:
             continue
 
         target[leaf] = _coerce(item.get("value", ""))
-        changes.append(f"Set {key} to {target[leaf]}")
+        changes.append(f"Set {escape_md(key)} to {escape_md(target[leaf])}")
 
     origins = config.setdefault("origins", [])
     for code in parsed.get("add_origins", []):
@@ -298,7 +290,7 @@ def _execute_action(state: dict, parsed: dict, config: dict) -> str:
         if not changes:
             return "I didn't find any changes to make there. Try rephrasing, or /cancel."
         _save_config(config)
-        return "\n".join(escape_md(change) for change in changes)
+        return "\n".join(changes)
 
     if action == "show_config":
         return _format_config(config)
