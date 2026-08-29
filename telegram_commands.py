@@ -276,8 +276,12 @@ def _execute_action(state: dict, parsed: dict, config: dict) -> str:
         state["trip_draft"] = trip
         return _format_proposal(trip, config)
 
-    if action == "cancel_trip" and isinstance(parsed.get("trip_id"), int):
-        trip_id = parsed["trip_id"]
+    raw_trip_id = parsed.get("trip_id")
+    trip_id_valid = isinstance(raw_trip_id, int) or (
+        isinstance(raw_trip_id, str) and raw_trip_id.strip().isdigit()
+    )
+    if action == "cancel_trip" and trip_id_valid:
+        trip_id = int(raw_trip_id)
         if trips.cancel_trip(trip_id):
             return f"Trip #{trip_id} cancelled."
         return f"No active trip with id {trip_id}."
@@ -300,6 +304,9 @@ def _execute_action(state: dict, parsed: dict, config: dict) -> str:
 
     if action in ("answer", "unclear") and parsed.get("reply"):
         return parsed["reply"]
+
+    if parsed.get("clarification_needed"):
+        return parsed["clarification_needed"]
 
     return fallback
 
@@ -337,19 +344,15 @@ def _dispatch(chat_id, text: str) -> str:
         return "Cancelled."
 
     if command in ("/start", "/help"):
-        _clear_pending(chat_id)
         return HELP_TEXT
 
     if command == "/get":
-        _clear_pending(chat_id)
         return _handle_get()
 
     if command == "/trips":
-        _clear_pending(chat_id)
         return _handle_trips_list()
 
     if command == "/cancel-trip":
-        _clear_pending(chat_id)
         return _handle_cancel_trip(stripped.split()[1:])
 
     if command == "/set-config":

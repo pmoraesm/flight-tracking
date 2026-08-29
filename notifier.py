@@ -51,13 +51,21 @@ def send_message(text: str) -> bool:
         return False
 
     url = TELEGRAM_API.format(token=token)
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
     try:
-        resp = requests.post(
-            url,
-            json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
-            timeout=10,
-        )
-        resp.raise_for_status()
+        resp = requests.post(url, json=payload, timeout=10)
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError:
+            if "parse_mode" not in payload:
+                raise
+            logger.warning(
+                "Telegram send failed with formatted text (%s) — retrying as plain text.",
+                resp.status_code,
+            )
+            payload = {k: v for k, v in payload.items() if k != "parse_mode"}
+            resp = requests.post(url, json=payload, timeout=10)
+            resp.raise_for_status()
         return True
     except requests.RequestException as exc:
         logger.error("Telegram send failed: %s", exc)

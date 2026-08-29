@@ -411,3 +411,85 @@ def test_cancel_trip_unknown_id(tmp_path, monkeypatch):
 def test_cancel_trip_missing_id():
     reply = tc._dispatch(3, "/cancel-trip")
     assert "Usage" in reply
+
+
+def test_get_command_does_not_clear_pending_draft(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    chat_id = 3
+    draft = {"description": "Beach getaway"}
+    tc._pending[chat_id] = {"session_id": "sess-1", "trip_draft": draft}
+
+    tc._dispatch(chat_id, "/get")
+
+    assert tc._pending[chat_id] == {"session_id": "sess-1", "trip_draft": draft}
+
+
+def test_trips_command_does_not_clear_pending_draft(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    chat_id = 3
+    draft = {"description": "Beach getaway"}
+    tc._pending[chat_id] = {"session_id": "sess-1", "trip_draft": draft}
+
+    tc._dispatch(chat_id, "/trips")
+
+    assert tc._pending[chat_id] == {"session_id": "sess-1", "trip_draft": draft}
+
+
+def test_cancel_trip_command_does_not_clear_pending_draft(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(trips, "_initialized", False)
+
+    chat_id = 3
+    draft = {"description": "Beach getaway"}
+    tc._pending[chat_id] = {"session_id": "sess-1", "trip_draft": draft}
+
+    tc._dispatch(chat_id, "/cancel-trip 999")
+
+    assert tc._pending[chat_id] == {"session_id": "sess-1", "trip_draft": draft}
+
+
+def test_help_command_does_not_clear_pending_draft(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    chat_id = 3
+    draft = {"description": "Beach getaway"}
+    tc._pending[chat_id] = {"session_id": "sess-1", "trip_draft": draft}
+
+    tc._dispatch(chat_id, "/help")
+
+    assert tc._pending[chat_id] == {"session_id": "sess-1", "trip_draft": draft}
+
+
+def test_cancel_trip_action_accepts_string_trip_id(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    trip_id = trips.create_trip(
+        description="Rio getaway", destinations=["GIG"],
+        ideal_date="2026-12-05", ideal_return_date="2026-12-19",
+        departure_range_before=1, departure_range_after=1,
+        return_range_before=1, return_range_after=1,
+    )
+
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": f'{{"action": "cancel_trip", "trip_id": "{trip_id}"}}',
+        "session_id": "sess-1",
+    }):
+        reply = tc._dispatch(3, "cancel my Rio trip")
+
+    assert f"Trip #{trip_id} cancelled" in reply
+    assert trips.get_active_trips() == []
+
+
+def test_bare_clarification_needed_field_is_treated_as_unclear_reply(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": '{"clarification_needed": "Which trip?"}',
+        "session_id": "sess-1",
+    }):
+        reply = tc._dispatch(1, "cancel it")
+
+    assert reply == "Which trip?"

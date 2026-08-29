@@ -1,4 +1,6 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+import requests
 
 import notifier
 
@@ -93,3 +95,39 @@ def test_notify_summary_sends_nothing_for_empty_list():
         notifier.notify_summary([])
 
     mock_send.assert_not_called()
+
+
+def test_send_message_retries_without_markdown_on_http_error(monkeypatch):
+    monkeypatch.setattr(notifier, "_token", lambda: "test-token")
+    monkeypatch.setattr(notifier, "_chat_id", lambda: "test-chat")
+
+    failing_resp = MagicMock()
+    failing_resp.raise_for_status.side_effect = requests.HTTPError(response=failing_resp)
+    succeeding_resp = MagicMock()
+    succeeding_resp.raise_for_status.return_value = None
+
+    with patch("notifier.requests.post", side_effect=[failing_resp, succeeding_resp]) as mock_post:
+        result = notifier.send_message("*unbalanced markdown")
+
+    assert result is True
+    assert mock_post.call_count == 2
+
+    first_kwargs = mock_post.call_args_list[0].kwargs
+    assert first_kwargs["json"]["parse_mode"] == "Markdown"
+
+    second_kwargs = mock_post.call_args_list[1].kwargs
+    assert "parse_mode" not in second_kwargs["json"]
+
+
+def test_send_message_does_not_retry_on_connection_error(monkeypatch):
+    monkeypatch.setattr(notifier, "_token", lambda: "test-token")
+    monkeypatch.setattr(notifier, "_chat_id", lambda: "test-chat")
+
+    with patch(
+        "notifier.requests.post",
+        side_effect=requests.ConnectionError("connection refused"),
+    ) as mock_post:
+        result = notifier.send_message("hello")
+
+    assert result is False
+    assert mock_post.call_count == 1
