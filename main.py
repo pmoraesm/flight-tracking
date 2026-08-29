@@ -51,6 +51,7 @@ def run_check() -> None:
 
                 for result in combo:
                     result["trip_description"] = trip["description"]
+                    result["trip_id"] = trip["id"]
                     result["is_good_deal"] = deals.is_good_deal(
                         trip["id"], result["price_value"], trip["baseline_price_estimate"]
                     )

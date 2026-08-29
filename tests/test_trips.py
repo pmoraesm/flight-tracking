@@ -63,6 +63,17 @@ def test_get_active_trips_expires_trips_past_their_return_window():
     assert trips.get_trip(trip_id)["status"] == "expired"
 
 
+def test_get_active_trips_logs_warning_when_expiring_a_trip(caplog):
+    past_return = (date.today() - timedelta(days=10)).isoformat()
+    trip_id = _create(ideal_date="2020-01-01", ideal_return_date=past_return)
+
+    with caplog.at_level("WARNING"):
+        trips.get_active_trips()
+
+    warnings = [r.message for r in caplog.records if r.levelname == "WARNING"]
+    assert any(str(trip_id) in msg and "expired" in msg for msg in warnings)
+
+
 def test_cancel_trip_returns_false_for_unknown_id():
     assert trips.cancel_trip(999) is False
 

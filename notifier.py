@@ -64,7 +64,7 @@ def notify_alerts(good_deals: list) -> None:
         level = a.get("current_price_level")
         level_note = f"\n  Google rates this: {level}" if level else ""
         lines.append(
-            f"*{a['trip_description']}*\n"
+            f"*#{a.get('trip_id', '?')} {a['trip_description']}*\n"
             f"*{a['price']}* — {a['origin']} → {a['destination']}\n"
             f"  Depart: {a['depart_date']}  |  Return: {a['return_date']}\n"
             f"  {a['airline']}  |  {a['duration']}  |  {stops}{link}{level_note}\n"
@@ -85,7 +85,7 @@ def notify_summary(trip_summaries: list) -> None:
         stops = "Direct" if t["stops"] == 0 else f"{t['stops']} stop(s)"
         link = f" [↗]({t['url']})" if t.get("url") else ""
         lines.append(
-            f"*{t['trip_description']}*: {t['price']} — {t['origin']} → {t['destination']}, "
+            f"*#{t.get('trip_id', '?')} {t['trip_description']}*: {t['price']} — {t['origin']} → {t['destination']}, "
             f"{t['depart_date']} / back {t['return_date']} ({t['airline']}, {stops}){link}"
         )
 

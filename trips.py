@@ -156,6 +156,10 @@ def _expire_overdue_trips(today=None) -> None:
         last_return = date.fromisoformat(row["ideal_return_date"])
         cutoff = last_return.toordinal() + row["return_range_after"]
         if cutoff < today_ordinal:
+            logger.warning(
+                "Trip #%s expired (return window ended %s + %s days)",
+                row["id"], row["ideal_return_date"], row["return_range_after"],
+            )
             conn.execute("UPDATE trips SET status = 'expired' WHERE id = ?", (row["id"],))
     conn.commit()
     conn.close()

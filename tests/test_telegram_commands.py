@@ -128,6 +128,28 @@ def test_new_trip_shows_proposal_and_waits_for_confirmation():
     assert tc._pending_trip[chat_id]["proposal"]["description"] == "Beach getaway"
 
 
+def test_new_trip_proposal_missing_range_field_defaults_instead_of_crashing():
+    chat_id = 2
+    tc._dispatch(chat_id, "/new-trip")
+
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": (
+            '{"description": "Beach getaway", "destinations": ["BKK", "HKT"], '
+            '"ideal_date": "2026-12-05", "ideal_return_date": "2026-12-19", '
+            '"departure_range_after": 3, '
+            '"return_range_before": 3, "return_range_after": 3, '
+            '"baseline_price_estimate": 650}'
+        ),
+        "session_id": "sess-trip-1",
+    }):
+        reply = tc._dispatch(chat_id, "somewhere warm in SE Asia in December")
+
+    assert not reply.startswith("Error:")
+    assert "BKK" in reply and "HKT" in reply
+    assert "-3/+3d departure" in reply
+    assert tc._pending_trip[chat_id]["proposal"]["departure_range_before"] == 3
+
+
 def test_new_trip_confirmation_creates_trip(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
     monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")

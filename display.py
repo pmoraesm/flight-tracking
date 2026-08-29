@@ -23,10 +23,11 @@ def print_results(results: list) -> None:
 
     by_trip: dict = {}
     for r in results:
-        by_trip.setdefault(r.get("trip_description", "Untitled trip"), []).append(r)
+        label = f"#{r.get('trip_id', '?')} {r.get('trip_description', 'Untitled trip')}"
+        by_trip.setdefault(label, []).append(r)
 
-    for trip_description, trip_results in by_trip.items():
-        console.print(f"[bold]{trip_description}[/bold]")
+    for trip_label, trip_results in by_trip.items():
+        console.print(f"[bold]{trip_label}[/bold]")
 
         by_origin: dict = {}
         for r in trip_results:
@@ -81,7 +82,7 @@ def print_alerts(good_deals: list) -> None:
     console.rule("[bold green] PRICE ALERT [/bold green]")
     for a in sorted(good_deals, key=lambda r: r["price_value"]):
         console.print(
-            f"[bold green]★ {a.get('trip_description', '')} — {a['price']}[/bold green]  "
+            f"[bold green]★ #{a.get('trip_id', '?')} {a.get('trip_description', '')} — {a['price']}[/bold green]  "
             f"{a['origin']} → {a['destination']}  "
             f"[cyan]{a['depart_date']}[/cyan] / back [cyan]{a['return_date']}[/cyan]  "
             f"{a['airline']}  {a['duration']}  "

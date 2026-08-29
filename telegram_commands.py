@@ -282,6 +282,9 @@ def _handle_new_trip_reply(chat_id, text: str) -> str:
     if not all(parsed.get(field) for field in required):
         return "I couldn't work out a full trip from that. Try rephrasing, or /cancel."
 
+    for field in ("departure_range_before", "departure_range_after", "return_range_before", "return_range_after"):
+        parsed.setdefault(field, 3)
+
     state["proposal"] = parsed
     return _format_proposal(parsed)
 

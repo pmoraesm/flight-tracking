@@ -47,6 +47,7 @@ def test_run_check_tags_results_and_routes_good_deals_to_alerts():
 
     all_results_arg = mock_print_results.call_args[0][0]
     assert all_results_arg[0]["trip_description"] == "Beach trip"
+    assert all_results_arg[0]["trip_id"] == 1
     assert all_results_arg[0]["is_good_deal"] is True
 
     alerts_arg = mock_print_alerts.call_args[0][0]
