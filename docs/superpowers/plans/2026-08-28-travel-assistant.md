@@ -2042,13 +2042,9 @@ git commit -m "Retrofit /set-config onto relay_client with session reuse"
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/test_telegram_commands.py`:
+`tests/test_telegram_commands.py` already has a `def setup_function(): tc._pending_config.clear()` from Task 9 — replace that one definition with the version below (do not add a second `setup_function`; a module can only have one, and pytest would silently use only the last one anyway). Add the `import storage` / `import trips` lines near the file's existing imports, and append the new test functions after the existing ones:
 
 ```python
-import storage
-import trips
-
-
 def setup_function():
     tc._pending_config.clear()
     tc._pending_trip.clear()
