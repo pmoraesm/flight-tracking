@@ -1,12 +1,15 @@
-"""Telegram bot commands to view and edit config.yaml, and to create and
-manage trip requests, from a phone.
+"""Telegram bot commands: slash commands for direct actions, and one
+relay-backed router for everything else.
 
-/set-config and /new-trip each start a short conversation: the bot asks
-what to change or where to go, the user replies in plain language, and a
-Claude Code relay running on the same VPS turns that reply into concrete
-edits. The relay's shared persona is sent once per conversation
-(relay_client.PERSONA_PROMPT); every following turn resumes the same
-session instead of resending it.
+/new-trip and /set-config start a short conversation by asking a
+question; /cancel-trip, /trips, /get, /help act immediately. Every
+other message — including replies inside an open conversation — goes
+through _route(), which asks the Claude Code relay running on the same
+VPS to pick one action (propose or revise a trip, cancel a trip, list
+trips, edit or show the config, answer a question, or say it's
+unclear) and runs it. The relay's shared persona is sent once per
+chat (relay_client.PERSONA_PROMPT); every following turn resumes the
+same session instead of resending it.
 """
 
 import logging
@@ -39,45 +42,62 @@ HELP_TEXT = (
     "/get — show current shared settings\n"
     "/cancel — cancel a pending /set-config or /new-trip\n"
     "/help — show this message\n\n"
-    "Changes apply on the next scheduled check, except interval_minutes, "
+    "You can also just describe what you want in plain language, any "
+    "time — start a trip, ask about one, cancel one, or change a "
+    "setting.\n\n"
+    "Changes apply on the next scheduled check, except interval\\_minutes, "
     "which needs a restart."
 )
 
-_CONFIG_TASK_PROMPT = (
-    "You turn a user's plain-language request into edits for a flight "
-    "tracker's config. Respond with nothing but a single JSON object, "
-    "shaped exactly like this:\n"
-    '{"sets": [{"key": "dotted.path", "value": "string"}], '
-    '"add_origins": ["IATA"], "remove_origins": ["IATA"], '
-    '"clarification_needed": "a question, only if the request is unclear"}\n'
-    "Use dotted paths for nested keys, e.g. passengers.adults. Use IATA "
-    "airport codes for origins, translating city or airport names yourself. "
-    "Omit fields that don't apply. If the request is unclear or names a "
-    "setting that doesn't exist, set clarification_needed instead of "
-    "guessing."
-)
-
-_NEW_TRIP_TASK_PROMPT = (
-    "You turn a user's plain-language travel request into a structured "
-    "trip proposal for a flight-price tracker. Respond with nothing but a "
+_ROUTER_TASK_PROMPT = (
+    "You are the router for a flight-price-tracking Telegram bot. Every "
+    "message you see is one turn in an ongoing conversation with one "
+    "user. Decide what the user wants and respond with nothing but a "
     "single JSON object, shaped exactly like this:\n"
-    '{"description": "a short 3-6 word label for this trip", '
-    '"destinations": ["IATA", ...], "origins": ["IATA", ...] (omit if not '
-    'mentioned), "ideal_date": "YYYY-MM-DD", "ideal_return_date": '
-    '"YYYY-MM-DD", "departure_range_before": int, "departure_range_after": '
-    'int, "return_range_before": int, "return_range_after": int, '
-    '"baseline_price_estimate": a plausible round-trip economy fare in EUR '
-    'for this route as a number, "clarification_needed": "a question, only '
-    'if the request is unclear"}\n'
-    "Pick 1 to 6 destination airports. For a loose date description (a "
-    "month, \"a couple of weeks in December\"), pick a sensible ideal_date "
-    "roughly in the middle of it and a return date matching the trip "
-    "length implied, with ranges wide enough to cover the described "
-    "period. Default range fields to 3 when not implied by the request."
+    '{"action": "propose_trip | revise_trip | cancel_trip | list_trips '
+    '| set_config | show_config | help | answer | unclear", '
+    '"trip": {"description": "a short 3-6 word label for this trip", '
+    '"destinations": ["IATA", ...], "origins": ["IATA", ...] (omit if '
+    'not mentioned), "ideal_date": "YYYY-MM-DD", "ideal_return_date": '
+    '"YYYY-MM-DD", "departure_range_before": int, '
+    '"departure_range_after": int, "return_range_before": int, '
+    '"return_range_after": int, "baseline_price_estimate": a plausible '
+    'round-trip economy fare in EUR for this route as a number}, '
+    '"trip_id": int, '
+    '"config_edits": {"sets": [{"key": "dotted.path", "value": "string"}], '
+    '"add_origins": ["IATA"], "remove_origins": ["IATA"]}, '
+    '"reply": "text"}\n'
+    'Use "propose_trip" to start a new trip, or when there is no '
+    'pending proposal to revise. Use "revise_trip" only to change a '
+    "proposal already shown to the user, and carry over every field "
+    "from it that the new message doesn't change. Use \"cancel_trip\" "
+    "only when the request matches exactly one id in the active trips "
+    "list given below; if it's ambiguous or matches none, use "
+    '"unclear" instead and ask which trip in "reply". Use "set_config" '
+    "for changes to the shared settings given below — dotted paths for "
+    "nested keys, e.g. passengers.adults; IATA airport codes for "
+    "origins, translating city or airport names yourself. Use "
+    '"answer" to respond to a question about the pending proposal, the '
+    'active trips, or the shared settings, using the data given below '
+    '— put the answer in "reply". Use "unclear" when the request is '
+    "ambiguous or names something that doesn't exist, and ask a short "
+    'clarifying question in "reply". Omit fields that don\'t apply to '
+    "the chosen action. For a loose date description (a month, \"a "
+    "couple of weeks in December\"), pick a sensible ideal_date roughly "
+    "in the middle of it and a return date matching the trip length "
+    "implied, with ranges wide enough to cover the described period. "
+    "Default range fields to 3 when not implied by the request."
 )
 
-_pending_config: dict = {}
-_pending_trip: dict = {}
+_pending: dict = {}
+
+
+def escape_md(text) -> str:
+    """Escape characters Telegram's legacy Markdown parse mode treats as formatting."""
+    text = str(text)
+    for char in ("_", "*", "`", "["):
+        text = text.replace(char, f"\\{char}")
+    return text
 
 
 def _relay_turn(followup_prompt: str, full_prompt: str, task_prompt: str, session_id) -> tuple:
@@ -167,16 +187,6 @@ def _apply_changes(config, parsed: dict) -> list[str]:
     return changes
 
 
-def _parse_config_request(text: str, config: dict, session_id=None) -> tuple:
-    full_prompt = f"Current config (Python dict): {config!r}\n\nUser request: {text}"
-    return _relay_turn(text, full_prompt, _CONFIG_TASK_PROMPT, session_id)
-
-
-def _parse_trip_request(text: str, session_id=None) -> tuple:
-    full_prompt = f"User request: {text}"
-    return _relay_turn(text, full_prompt, _NEW_TRIP_TASK_PROMPT, session_id)
-
-
 def _format_proposal(proposal: dict, config: dict) -> str:
     destinations = ", ".join(proposal["destinations"])
     origins = proposal.get("origins")
@@ -231,74 +241,99 @@ def _handle_cancel_trip(args: list) -> str:
     return f"No active trip with id {trip_id}."
 
 
-def _handle_config_reply(text: str, session_id) -> tuple:
-    """Returns (reply, still_pending, session_id)."""
+def _build_router_prompt(text: str, state: dict, config: dict, active: list) -> str:
+    trips_summary = "\n".join(f"#{t['id']} {t['description']}" for t in active) or "none"
+    draft = state.get("trip_draft")
+    return (
+        f"Shared config (Python dict): {config!r}\n\n"
+        f"Active trips:\n{trips_summary}\n\n"
+        f"Pending trip proposal (not yet confirmed): {draft!r}\n\n"
+        f"User message: {text}"
+    )
+
+
+def _confirm_trip(chat_id, state: dict) -> str:
+    trip = state["trip_draft"]
+    trip_id = trips.create_trip(
+        description=trip["description"],
+        destinations=trip["destinations"],
+        ideal_date=trip["ideal_date"],
+        ideal_return_date=trip["ideal_return_date"],
+        departure_range_before=trip.get("departure_range_before", 3),
+        departure_range_after=trip.get("departure_range_after", 3),
+        return_range_before=trip.get("return_range_before", 3),
+        return_range_after=trip.get("return_range_after", 3),
+        origins=trip.get("origins"),
+        baseline_price_estimate=trip.get("baseline_price_estimate"),
+    )
+    _pending.pop(chat_id, None)
+    return f"Trip #{trip_id} ({escape_md(trip['description'])}) is now being tracked."
+
+
+def _execute_action(state: dict, parsed: dict, config: dict) -> str:
+    action = parsed.get("action")
+    fallback = "Sorry, I didn't understand that — try rephrasing, or /help."
+
+    if action in ("propose_trip", "revise_trip"):
+        trip = parsed.get("trip") or {}
+        required = ("description", "destinations", "ideal_date", "ideal_return_date")
+        if not all(trip.get(field) for field in required):
+            return "I couldn't work out a full trip from that. Try rephrasing, or /cancel."
+        for field in ("departure_range_before", "departure_range_after", "return_range_before", "return_range_after"):
+            trip.setdefault(field, 3)
+        state["trip_draft"] = trip
+        return _format_proposal(trip, config)
+
+    if action == "cancel_trip" and isinstance(parsed.get("trip_id"), int):
+        trip_id = parsed["trip_id"]
+        if trips.cancel_trip(trip_id):
+            return f"Trip #{trip_id} cancelled."
+        return f"No active trip with id {trip_id}."
+
+    if action == "list_trips":
+        return _handle_trips_list()
+
+    if action == "set_config":
+        changes = _apply_changes(config, parsed.get("config_edits") or {})
+        if not changes:
+            return "I didn't find any changes to make there. Try rephrasing, or /cancel."
+        _save_config(config)
+        return "\n".join(escape_md(change) for change in changes)
+
+    if action == "show_config":
+        return _format_config(config)
+
+    if action == "help":
+        return HELP_TEXT
+
+    if action in ("answer", "unclear") and parsed.get("reply"):
+        return parsed["reply"]
+
+    return fallback
+
+
+def _route(chat_id, text: str) -> str:
+    state = _pending.setdefault(chat_id, {"session_id": None, "trip_draft": None})
+
+    if state["trip_draft"] and text.strip().lower() == "yes":
+        return _confirm_trip(chat_id, state)
+
     config = _load_config()
+    active = trips.get_active_trips()
+    prompt = _build_router_prompt(text, state, config, active)
 
     try:
-        parsed, session_id = _parse_config_request(text, config, session_id=session_id)
+        parsed, session_id = _relay_turn(prompt, prompt, _ROUTER_TASK_PROMPT, state["session_id"])
     except Exception as exc:
-        logger.error("Claude config parse failed: %s", exc)
-        return f"Sorry, I couldn't process that: {exc}", True, session_id
-
-    clarification = parsed.get("clarification_needed")
-    if clarification:
-        return clarification, True, session_id
-
-    changes = _apply_changes(config, parsed)
-    if not changes:
-        return "I didn't find any changes to make there. Try rephrasing, or /cancel.", True, session_id
-
-    _save_config(config)
-    return "\n".join(changes), False, session_id
-
-
-def _handle_new_trip_reply(chat_id, text: str) -> str:
-    state = _pending_trip[chat_id]
-
-    if state["proposal"] and text.strip().lower() == "yes":
-        proposal = state["proposal"]
-        trip_id = trips.create_trip(
-            description=proposal["description"],
-            destinations=proposal["destinations"],
-            ideal_date=proposal["ideal_date"],
-            ideal_return_date=proposal["ideal_return_date"],
-            departure_range_before=proposal.get("departure_range_before", 3),
-            departure_range_after=proposal.get("departure_range_after", 3),
-            return_range_before=proposal.get("return_range_before", 3),
-            return_range_after=proposal.get("return_range_after", 3),
-            origins=proposal.get("origins"),
-            baseline_price_estimate=proposal.get("baseline_price_estimate"),
-        )
-        _pending_trip.pop(chat_id, None)
-        return f"Trip #{trip_id} ({proposal['description']}) is now being tracked."
-
-    try:
-        parsed, session_id = _parse_trip_request(text, session_id=state["session_id"])
-    except Exception as exc:
-        logger.error("Claude trip parse failed: %s", exc)
-        return f"Sorry, I couldn't process that: {exc}"
+        logger.error("Router relay call failed: %s", exc)
+        return f"Sorry, I couldn't process that: {escape_md(exc)}"
 
     state["session_id"] = session_id
-
-    clarification = parsed.get("clarification_needed")
-    if clarification:
-        return clarification
-
-    required = ("description", "destinations", "ideal_date", "ideal_return_date")
-    if not all(parsed.get(field) for field in required):
-        return "I couldn't work out a full trip from that. Try rephrasing, or /cancel."
-
-    for field in ("departure_range_before", "departure_range_after", "return_range_before", "return_range_after"):
-        parsed.setdefault(field, 3)
-
-    state["proposal"] = parsed
-    return _format_proposal(parsed, _load_config())
+    return _execute_action(state, parsed, config)
 
 
 def _clear_pending(chat_id) -> None:
-    _pending_config.pop(chat_id, None)
-    _pending_trip.pop(chat_id, None)
+    _pending.pop(chat_id, None)
 
 
 def _dispatch(chat_id, text: str) -> str:
@@ -327,33 +362,22 @@ def _dispatch(chat_id, text: str) -> str:
 
     if command == "/set-config":
         _clear_pending(chat_id)
-        _pending_config[chat_id] = None
+        _pending[chat_id] = {"session_id": None, "trip_draft": None}
         return "What would you like to change? Describe it in plain language."
 
     if command == "/new-trip":
         _clear_pending(chat_id)
-        _pending_trip[chat_id] = {"session_id": None, "proposal": None}
+        _pending[chat_id] = {"session_id": None, "trip_draft": None}
         return (
             "Where and when do you want to go? Describe it in plain "
             "language — a place, a kind of destination, specific dates, "
             "or a loose period."
         )
 
-    if chat_id in _pending_config:
-        reply, still_pending, session_id = _handle_config_reply(stripped, _pending_config[chat_id])
-        if still_pending:
-            _pending_config[chat_id] = session_id
-        else:
-            _pending_config.pop(chat_id, None)
-        return reply
-
-    if chat_id in _pending_trip:
-        return _handle_new_trip_reply(chat_id, stripped)
-
     if command.startswith("/"):
-        return f"Unknown command: {command}\n\n{HELP_TEXT}"
+        return f"Unknown command: {escape_md(command)}\n\n{HELP_TEXT}"
 
-    return HELP_TEXT
+    return _route(chat_id, stripped)
 
 
 def _get_updates(offset=None):

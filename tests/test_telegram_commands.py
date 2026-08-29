@@ -8,72 +8,306 @@ import telegram_commands as tc
 
 
 def setup_function():
-    tc._pending_config.clear()
-    tc._pending_trip.clear()
+    tc._pending.clear()
 
 
-def test_set_config_first_turn_sends_persona_and_context(tmp_path, monkeypatch):
+def _router_env(tmp_path, monkeypatch, origins=("AMS",)):
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(storage, "_initialized", False)
+    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(trips, "_initialized", False)
+    storage._get_connection().close()
     config_path = tmp_path / "config.yaml"
-    config_path.write_text("origins:\n  - AMS\ninterval_minutes: 60\n")
+    config_path.write_text("origins:\n" + "".join(f"  - {o}\n" for o in origins))
     monkeypatch.setattr(tc, "CONFIG_PATH", config_path)
 
-    chat_id = 1
-    tc._dispatch(chat_id, "/set-config")
+
+def test_format_proposal_shows_configured_origins_when_not_overridden():
+    proposal = {
+        "destinations": ["GRU"],
+        "ideal_date": "2026-12-14", "ideal_return_date": "2026-12-24",
+        "departure_range_before": 13, "departure_range_after": 17,
+        "return_range_before": 13, "return_range_after": 17,
+        "baseline_price_estimate": 750,
+    }
+    config = {"origins": ["AMS", "BRU", "EIN"]}
+
+    reply = tc._format_proposal(proposal, config)
+
+    assert "Departure airports: AMS, BRU, EIN (from shared settings)" in reply
+
+
+def test_format_proposal_shows_trip_specific_origins_when_set():
+    proposal = {
+        "destinations": ["GRU"], "origins": ["CDG", "ORY"],
+        "ideal_date": "2026-12-14", "ideal_return_date": "2026-12-24",
+        "departure_range_before": 13, "departure_range_after": 17,
+        "return_range_before": 13, "return_range_after": 17,
+    }
+    config = {"origins": ["AMS", "BRU", "EIN"]}
+
+    reply = tc._format_proposal(proposal, config)
+
+    assert "Departure airports: CDG, ORY" in reply
+    assert "from shared settings" not in reply
+
+
+def test_propose_trip_from_free_text_with_no_pending_state(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch, origins=("AMS", "BRU"))
+
+    chat_id = 2
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": (
+            '{"action": "propose_trip", "trip": {'
+            '"description": "Beach getaway", "destinations": ["BKK", "HKT"], '
+            '"ideal_date": "2026-12-05", "ideal_return_date": "2026-12-19", '
+            '"departure_range_before": 3, "departure_range_after": 3, '
+            '"return_range_before": 3, "return_range_after": 3, '
+            '"baseline_price_estimate": 650}}'
+        ),
+        "session_id": "sess-trip-1",
+    }) as mock_query:
+        reply = tc._dispatch(chat_id, "somewhere warm in SE Asia in December")
+
+    assert "BKK" in reply and "HKT" in reply
+    assert "Departure airports: AMS, BRU (from shared settings)" in reply
+    assert "yes" in reply.lower()
+    assert tc._pending[chat_id]["trip_draft"]["description"] == "Beach getaway"
+    args, kwargs = mock_query.call_args
+    assert kwargs["system_prompt"] is not None
+
+
+def test_propose_trip_missing_range_field_defaults_instead_of_crashing(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    chat_id = 2
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": (
+            '{"action": "propose_trip", "trip": {'
+            '"description": "Beach getaway", "destinations": ["BKK", "HKT"], '
+            '"ideal_date": "2026-12-05", "ideal_return_date": "2026-12-19", '
+            '"departure_range_after": 3, '
+            '"return_range_before": 3, "return_range_after": 3, '
+            '"baseline_price_estimate": 650}}'
+        ),
+        "session_id": "sess-trip-1",
+    }):
+        reply = tc._dispatch(chat_id, "somewhere warm in SE Asia in December")
+
+    assert not reply.startswith("Error:")
+    assert "BKK" in reply and "HKT" in reply
+    assert "-3/+3d departure" in reply
+    assert tc._pending[chat_id]["trip_draft"]["departure_range_before"] == 3
+
+
+def test_propose_trip_missing_required_field_shows_generic_message(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
 
     with patch("telegram_commands.relay_client.query", return_value={
-        "result": '{"sets": [{"key": "interval_minutes", "value": "90"}]}',
+        "result": '{"action": "propose_trip", "trip": {"destinations": ["BKK"]}}',
+        "session_id": "sess-1",
+    }):
+        reply = tc._dispatch(2, "somewhere")
+
+    assert "couldn't work out a full trip" in reply
+
+
+def test_revise_trip_resumes_session_without_resending_persona(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    chat_id = 2
+    tc._pending[chat_id] = {
+        "session_id": "sess-trip-1",
+        "trip_draft": {
+            "description": "Beach getaway", "destinations": ["BKK", "HKT"],
+            "ideal_date": "2026-12-05", "ideal_return_date": "2026-12-19",
+            "departure_range_before": 3, "departure_range_after": 3,
+            "return_range_before": 3, "return_range_after": 3,
+            "baseline_price_estimate": 650,
+        },
+    }
+
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": (
+            '{"action": "revise_trip", "trip": {'
+            '"description": "Beach getaway", "destinations": ["BKK"], '
+            '"ideal_date": "2026-12-05", "ideal_return_date": "2026-12-19", '
+            '"departure_range_before": 3, "departure_range_after": 3, '
+            '"return_range_before": 3, "return_range_after": 3, '
+            '"baseline_price_estimate": 650}}'
+        ),
+        "session_id": "sess-trip-1",
+    }) as mock_query:
+        reply = tc._dispatch(chat_id, "drop HKT, just BKK")
+
+    assert "BKK" in reply and "HKT" not in reply
+    args, kwargs = mock_query.call_args
+    assert kwargs["session_id"] == "sess-trip-1"
+    assert kwargs.get("system_prompt") is None
+
+
+def test_yes_confirms_pending_trip_without_calling_relay(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    chat_id = 2
+    tc._pending[chat_id] = {
+        "session_id": "sess-trip-1",
+        "trip_draft": {
+            "description": "Beach getaway", "destinations": ["BKK", "HKT"],
+            "ideal_date": "2026-12-05", "ideal_return_date": "2026-12-19",
+            "departure_range_before": 3, "departure_range_after": 3,
+            "return_range_before": 3, "return_range_after": 3,
+            "baseline_price_estimate": 650,
+        },
+    }
+
+    with patch("telegram_commands.relay_client.query") as mock_query:
+        reply = tc._dispatch(chat_id, "yes")
+
+    mock_query.assert_not_called()
+    assert "Beach getaway" in reply
+    assert chat_id not in tc._pending
+    active = trips.get_active_trips()
+    assert len(active) == 1
+    assert active[0]["description"] == "Beach getaway"
+
+
+def test_cancel_trip_action_cancels_matched_trip(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    trip_id = trips.create_trip(
+        description="Rio getaway", destinations=["GIG"],
+        ideal_date="2026-12-05", ideal_return_date="2026-12-19",
+        departure_range_before=1, departure_range_after=1,
+        return_range_before=1, return_range_after=1,
+    )
+
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": f'{{"action": "cancel_trip", "trip_id": {trip_id}}}',
+        "session_id": "sess-1",
+    }):
+        reply = tc._dispatch(3, "cancel my Rio trip")
+
+    assert f"Trip #{trip_id} cancelled" in reply
+    assert trips.get_active_trips() == []
+
+
+def test_list_trips_action_returns_active_trips(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    trips.create_trip(
+        description="Beach getaway", destinations=["BKK"],
+        ideal_date="2026-12-05", ideal_return_date="2026-12-19",
+        departure_range_before=1, departure_range_after=1,
+        return_range_before=1, return_range_after=1,
+    )
+
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": '{"action": "list_trips"}',
+        "session_id": "sess-1",
+    }):
+        reply = tc._dispatch(3, "what trips am I tracking?")
+
+    assert "Beach getaway" in reply
+
+
+def test_set_config_action_applies_edit(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+    tc.CONFIG_PATH.write_text("origins:\n  - AMS\ninterval_minutes: 60\n")
+
+    chat_id = 1
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": (
+            '{"action": "set_config", "config_edits": '
+            '{"sets": [{"key": "interval_minutes", "value": "90"}]}}'
+        ),
         "session_id": "sess-1",
     }) as mock_query:
         reply = tc._dispatch(chat_id, "set interval to 90 minutes")
 
-    assert "Set interval_minutes to 90" in reply
+    assert "Set interval\\_minutes to 90" in reply
     args, kwargs = mock_query.call_args
-    assert "Current config" in args[0]
+    assert "Shared config" in args[0]
     assert kwargs["system_prompt"] is not None
-    assert kwargs.get("session_id") is None
-    assert chat_id not in tc._pending_config
 
 
-def test_set_config_follow_up_turn_resumes_session_without_resending_persona(tmp_path, monkeypatch):
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text("origins:\n  - AMS\ninterval_minutes: 60\n")
-    monkeypatch.setattr(tc, "CONFIG_PATH", config_path)
-
-    chat_id = 1
-    tc._dispatch(chat_id, "/set-config")
+def test_show_config_action(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
 
     with patch("telegram_commands.relay_client.query", return_value={
-        "result": '{"clarification_needed": "Which setting do you mean?"}',
+        "result": '{"action": "show_config"}',
         "session_id": "sess-1",
     }):
-        tc._dispatch(chat_id, "lower the limit")
+        reply = tc._dispatch(1, "what are my current settings?")
 
-    assert tc._pending_config[chat_id] == "sess-1"
+    assert "origins" in reply
+
+
+def test_help_action_returns_help_text(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
 
     with patch("telegram_commands.relay_client.query", return_value={
-        "result": '{"sets": [{"key": "interval_minutes", "value": "90"}]}',
+        "result": '{"action": "help"}',
         "session_id": "sess-1",
-    }) as mock_query:
-        reply = tc._dispatch(chat_id, "the interval")
+    }):
+        reply = tc._dispatch(1, "what can you do?")
 
-    assert "Set interval_minutes to 90" in reply
-    args, kwargs = mock_query.call_args
-    assert args[0] == "the interval"
-    assert kwargs["session_id"] == "sess-1"
-    assert kwargs.get("system_prompt") is None
+    assert reply == tc.HELP_TEXT
 
 
-def test_set_config_falls_back_to_fresh_session_when_resume_fails(tmp_path, monkeypatch):
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text("origins:\n  - AMS\ninterval_minutes: 60\n")
-    monkeypatch.setattr(tc, "CONFIG_PATH", config_path)
+def test_answer_action_responds_to_a_question_without_losing_the_draft(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch, origins=("AMS", "BRU"))
+
+    chat_id = 2
+    draft = {
+        "description": "Beach getaway", "destinations": ["GRU"],
+        "ideal_date": "2026-12-14", "ideal_return_date": "2026-12-24",
+        "departure_range_before": 13, "departure_range_after": 17,
+        "return_range_before": 13, "return_range_after": 17,
+        "baseline_price_estimate": 750,
+    }
+    tc._pending[chat_id] = {"session_id": "sess-trip-1", "trip_draft": draft}
+
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": '{"action": "answer", "reply": "AMS and BRU, from your shared settings."}',
+        "session_id": "sess-trip-1",
+    }):
+        reply = tc._dispatch(chat_id, "What are the departure airports?")
+
+    assert reply == "AMS and BRU, from your shared settings."
+    assert tc._pending[chat_id]["trip_draft"] == draft
+
+
+def test_malformed_router_output_falls_back_to_generic_message(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": '{"action": "not_a_real_action"}',
+        "session_id": "sess-1",
+    }):
+        reply = tc._dispatch(1, "asdkjhasd")
+
+    assert "didn't understand" in reply
+
+
+def test_router_relay_failure_reports_error(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    with patch("telegram_commands.relay_client.query", side_effect=requests.RequestException("boom")):
+        reply = tc._dispatch(1, "anything")
+
+    assert "couldn't process that" in reply
+
+
+def test_router_falls_back_to_fresh_session_when_resume_fails(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
 
     chat_id = 1
-    tc._pending_config[chat_id] = "stale-session"
+    tc._pending[chat_id] = {"session_id": "stale-session", "trip_draft": None}
 
     responses = [
         requests.RequestException("session expired"),
-        {"result": '{"sets": [{"key": "interval_minutes", "value": "90"}]}', "session_id": "sess-new"},
+        {"result": '{"action": "show_config"}', "session_id": "sess-new"},
     ]
 
     def fake_query(*args, **kwargs):
@@ -83,9 +317,9 @@ def test_set_config_falls_back_to_fresh_session_when_resume_fails(tmp_path, monk
         return result
 
     with patch("telegram_commands.relay_client.query", side_effect=fake_query) as mock_query:
-        reply = tc._dispatch(chat_id, "set interval to 90 minutes")
+        reply = tc._dispatch(chat_id, "what are my settings?")
 
-    assert "Set interval_minutes to 90" in reply
+    assert "origins" in reply
     assert mock_query.call_count == 2
 
     first_args, first_kwargs = mock_query.call_args_list[0]
@@ -94,111 +328,25 @@ def test_set_config_falls_back_to_fresh_session_when_resume_fails(tmp_path, monk
 
     second_args, second_kwargs = mock_query.call_args_list[1]
     assert second_kwargs["system_prompt"] is not None
-    assert "Current config" in second_args[0]
 
 
-def test_cancel_clears_pending_config():
+def test_cancel_clears_pending_state():
     chat_id = 1
-    tc._pending_config[chat_id] = "sess-1"
+    tc._pending[chat_id] = {"session_id": "sess-1", "trip_draft": None}
 
     reply = tc._dispatch(chat_id, "/cancel")
 
     assert reply == "Cancelled."
-    assert chat_id not in tc._pending_config
+    assert chat_id not in tc._pending
 
 
-def test_new_trip_shows_proposal_and_waits_for_confirmation():
+def test_new_trip_command_resets_prior_pending_state():
     chat_id = 2
-    tc._dispatch(chat_id, "/new-trip")
-
-    with patch("telegram_commands.relay_client.query", return_value={
-        "result": (
-            '{"description": "Beach getaway", "destinations": ["BKK", "HKT"], '
-            '"ideal_date": "2026-12-05", "ideal_return_date": "2026-12-19", '
-            '"departure_range_before": 3, "departure_range_after": 3, '
-            '"return_range_before": 3, "return_range_after": 3, '
-            '"baseline_price_estimate": 650}'
-        ),
-        "session_id": "sess-trip-1",
-    }):
-        reply = tc._dispatch(chat_id, "somewhere warm in SE Asia in December")
-
-    assert "BKK" in reply and "HKT" in reply
-    assert "yes" in reply.lower()
-    assert tc._pending_trip[chat_id]["proposal"]["description"] == "Beach getaway"
-
-
-def test_new_trip_proposal_missing_range_field_defaults_instead_of_crashing():
-    chat_id = 2
-    tc._dispatch(chat_id, "/new-trip")
-
-    with patch("telegram_commands.relay_client.query", return_value={
-        "result": (
-            '{"description": "Beach getaway", "destinations": ["BKK", "HKT"], '
-            '"ideal_date": "2026-12-05", "ideal_return_date": "2026-12-19", '
-            '"departure_range_after": 3, '
-            '"return_range_before": 3, "return_range_after": 3, '
-            '"baseline_price_estimate": 650}'
-        ),
-        "session_id": "sess-trip-1",
-    }):
-        reply = tc._dispatch(chat_id, "somewhere warm in SE Asia in December")
-
-    assert not reply.startswith("Error:")
-    assert "BKK" in reply and "HKT" in reply
-    assert "-3/+3d departure" in reply
-    assert tc._pending_trip[chat_id]["proposal"]["departure_range_before"] == 3
-
-
-def test_new_trip_confirmation_creates_trip(tmp_path, monkeypatch):
-    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(trips, "_initialized", False)
-
-    chat_id = 2
-    tc._pending_trip[chat_id] = {
-        "session_id": "sess-trip-1",
-        "proposal": {
-            "description": "Beach getaway", "destinations": ["BKK", "HKT"],
-            "ideal_date": "2026-12-05", "ideal_return_date": "2026-12-19",
-            "departure_range_before": 3, "departure_range_after": 3,
-            "return_range_before": 3, "return_range_after": 3,
-            "baseline_price_estimate": 650,
-        },
-    }
-
-    reply = tc._dispatch(chat_id, "yes")
-
-    assert "Beach getaway" in reply
-    assert chat_id not in tc._pending_trip
-    active = trips.get_active_trips()
-    assert len(active) == 1
-    assert active[0]["description"] == "Beach getaway"
-
-
-def test_new_trip_clarification_keeps_conversation_open():
-    chat_id = 2
-    tc._dispatch(chat_id, "/new-trip")
-
-    with patch("telegram_commands.relay_client.query", return_value={
-        "result": '{"clarification_needed": "Which month did you mean?"}',
-        "session_id": "sess-trip-1",
-    }):
-        reply = tc._dispatch(chat_id, "sometime next year")
-
-    assert reply == "Which month did you mean?"
-    assert chat_id in tc._pending_trip
-    assert tc._pending_trip[chat_id]["proposal"] is None
-
-
-def test_new_trip_command_clears_a_pending_set_config():
-    chat_id = 2
-    tc._pending_config[chat_id] = "some-session"
+    tc._pending[chat_id] = {"session_id": "some-session", "trip_draft": {"description": "old"}}
 
     tc._dispatch(chat_id, "/new-trip")
 
-    assert chat_id not in tc._pending_config
-    assert chat_id in tc._pending_trip
+    assert tc._pending[chat_id] == {"session_id": None, "trip_draft": None}
 
 
 def test_trips_list_shows_no_active_trips_message(tmp_path, monkeypatch):
@@ -263,33 +411,3 @@ def test_cancel_trip_unknown_id(tmp_path, monkeypatch):
 def test_cancel_trip_missing_id():
     reply = tc._dispatch(3, "/cancel-trip")
     assert "Usage" in reply
-
-
-def test_format_proposal_shows_configured_origins_when_not_overridden():
-    proposal = {
-        "destinations": ["GRU"],
-        "ideal_date": "2026-12-14", "ideal_return_date": "2026-12-24",
-        "departure_range_before": 13, "departure_range_after": 17,
-        "return_range_before": 13, "return_range_after": 17,
-        "baseline_price_estimate": 750,
-    }
-    config = {"origins": ["AMS", "BRU", "EIN"]}
-
-    reply = tc._format_proposal(proposal, config)
-
-    assert "Departure airports: AMS, BRU, EIN (from shared settings)" in reply
-
-
-def test_format_proposal_shows_trip_specific_origins_when_set():
-    proposal = {
-        "destinations": ["GRU"], "origins": ["CDG", "ORY"],
-        "ideal_date": "2026-12-14", "ideal_return_date": "2026-12-24",
-        "departure_range_before": 13, "departure_range_after": 17,
-        "return_range_before": 13, "return_range_after": 17,
-    }
-    config = {"origins": ["AMS", "BRU", "EIN"]}
-
-    reply = tc._format_proposal(proposal, config)
-
-    assert "Departure airports: CDG, ORY" in reply
-    assert "from shared settings" not in reply
