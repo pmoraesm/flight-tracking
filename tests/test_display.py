@@ -1,4 +1,4 @@
-import display
+from flight_tracker import display
 
 
 def test_print_results_groups_by_trip_and_shows_data():

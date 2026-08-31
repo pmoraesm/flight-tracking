@@ -1,6 +1,6 @@
-import backfill_passengers
-import storage
-import trips
+from scripts import backfill_passengers
+from flight_tracker import storage
+from flight_tracker import trips
 
 
 def test_backfill_sets_passengers_only_on_null_rows():

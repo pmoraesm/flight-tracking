@@ -2,9 +2,9 @@ import sqlite3
 
 import psycopg
 
-import migrate_to_postgres
-import storage
-import trips
+from scripts import migrate_to_postgres
+from flight_tracker import storage
+from flight_tracker import trips
 
 
 def _build_sqlite_fixture(path):

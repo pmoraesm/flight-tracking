@@ -25,14 +25,14 @@ import requests
 import psycopg
 from ruamel.yaml import YAML
 
-import deals
-import relay_client
-import trips
-from notifier import is_configured, send_message, escape_md, _token, _chat_id
+from . import deals
+from . import relay_client
+from . import trips
+from .notifier import is_configured, send_message, escape_md, _token, _chat_id
 
 logger = logging.getLogger(__name__)
 
-CONFIG_PATH = Path(__file__).parent / "config.yaml"
+CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 
 _yaml = YAML()

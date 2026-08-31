@@ -1,7 +1,7 @@
 import psycopg
 from psycopg.types.json import Json
 
-import storage
+from flight_tracker import storage
 
 
 def _create_trip_row() -> int:

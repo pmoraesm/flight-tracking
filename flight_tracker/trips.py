@@ -8,7 +8,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 from ruamel.yaml import YAML
 
-import storage
+from . import storage
 
 logger = logging.getLogger(__name__)
 

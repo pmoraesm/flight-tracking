@@ -7,7 +7,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source
-COPY *.py ./
+COPY main.py .
+COPY flight_tracker/ ./flight_tracker/
+COPY scripts/ ./scripts/
 COPY config.yaml .
 
 # Persistent data lives in /data

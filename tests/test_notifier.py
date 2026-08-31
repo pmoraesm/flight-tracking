@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
-import notifier
+from flight_tracker import notifier
 
 
 def test_notify_alerts_includes_trip_description_and_price_level():
@@ -14,7 +14,7 @@ def test_notify_alerts_includes_trip_description_and_price_level():
         "current_price_level": "low",
     }]
 
-    with patch("notifier.send_message") as mock_send:
+    with patch("flight_tracker.notifier.send_message") as mock_send:
         notifier.notify_alerts(good_deals)
 
     sent_text = mock_send.call_args[0][0]
@@ -25,7 +25,7 @@ def test_notify_alerts_includes_trip_description_and_price_level():
 
 
 def test_notify_alerts_sends_nothing_for_empty_list():
-    with patch("notifier.send_message") as mock_send:
+    with patch("flight_tracker.notifier.send_message") as mock_send:
         notifier.notify_alerts([])
 
     mock_send.assert_not_called()
@@ -47,7 +47,7 @@ def test_notify_alerts_distinguishes_same_named_trips_by_id():
         },
     ]
 
-    with patch("notifier.send_message") as mock_send:
+    with patch("flight_tracker.notifier.send_message") as mock_send:
         notifier.notify_alerts(good_deals)
 
     sent_text = mock_send.call_args[0][0]
@@ -65,7 +65,7 @@ def test_notify_summary_has_one_line_per_trip_sorted_by_price():
          "return_date": "2026-12-19", "airline": "TG", "stops": 1, "url": ""},
     ]
 
-    with patch("notifier.send_message") as mock_send:
+    with patch("flight_tracker.notifier.send_message") as mock_send:
         notifier.notify_summary(trip_summaries)
 
     sent_text = mock_send.call_args[0][0]
@@ -82,7 +82,7 @@ def test_notify_summary_distinguishes_same_named_trips_by_id():
          "return_date": "2026-12-19", "airline": "TG", "stops": 1, "url": ""},
     ]
 
-    with patch("notifier.send_message") as mock_send:
+    with patch("flight_tracker.notifier.send_message") as mock_send:
         notifier.notify_summary(trip_summaries)
 
     sent_text = mock_send.call_args[0][0]
@@ -91,7 +91,7 @@ def test_notify_summary_distinguishes_same_named_trips_by_id():
 
 
 def test_notify_summary_sends_nothing_for_empty_list():
-    with patch("notifier.send_message") as mock_send:
+    with patch("flight_tracker.notifier.send_message") as mock_send:
         notifier.notify_summary([])
 
     mock_send.assert_not_called()
@@ -106,7 +106,7 @@ def test_send_message_retries_without_markdown_on_http_error(monkeypatch):
     succeeding_resp = MagicMock()
     succeeding_resp.raise_for_status.return_value = None
 
-    with patch("notifier.requests.post", side_effect=[failing_resp, succeeding_resp]) as mock_post:
+    with patch("flight_tracker.notifier.requests.post", side_effect=[failing_resp, succeeding_resp]) as mock_post:
         result = notifier.send_message("*unbalanced markdown")
 
     assert result is True
@@ -124,7 +124,7 @@ def test_send_message_does_not_retry_on_connection_error(monkeypatch):
     monkeypatch.setattr(notifier, "_chat_id", lambda: "test-chat")
 
     with patch(
-        "notifier.requests.post",
+        "flight_tracker.notifier.requests.post",
         side_effect=requests.ConnectionError("connection refused"),
     ) as mock_post:
         result = notifier.send_message("hello")

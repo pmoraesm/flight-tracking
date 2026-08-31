@@ -2,10 +2,10 @@ import psycopg
 import requests
 from unittest.mock import patch
 
-import deals
-import storage
-import trips
-import telegram_commands as tc
+from flight_tracker import deals
+from flight_tracker import storage
+from flight_tracker import trips
+from flight_tracker import telegram_commands as tc
 
 
 def setup_function():
@@ -52,7 +52,7 @@ def test_propose_trip_from_free_text_with_no_pending_state(tmp_path, monkeypatch
     _router_env(tmp_path, monkeypatch, origins=("AMS", "BRU"))
 
     chat_id = 2
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": (
             '{"action": "propose_trip", "trip": {'
             '"description": "Beach getaway", "destinations": ["BKK", "HKT"], '
@@ -77,7 +77,7 @@ def test_propose_trip_missing_range_field_defaults_instead_of_crashing(tmp_path,
     _router_env(tmp_path, monkeypatch)
 
     chat_id = 2
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": (
             '{"action": "propose_trip", "trip": {'
             '"description": "Beach getaway", "destinations": ["BKK", "HKT"], '
@@ -99,7 +99,7 @@ def test_propose_trip_missing_range_field_defaults_instead_of_crashing(tmp_path,
 def test_propose_trip_missing_required_field_shows_generic_message(tmp_path, monkeypatch):
     _router_env(tmp_path, monkeypatch)
 
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": '{"action": "propose_trip", "trip": {"destinations": ["BKK"]}}',
         "session_id": "sess-1",
     }):
@@ -123,7 +123,7 @@ def test_revise_trip_resumes_session_without_resending_persona(tmp_path, monkeyp
         },
     }
 
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": (
             '{"action": "revise_trip", "trip": {'
             '"description": "Beach getaway", "destinations": ["BKK"], '
@@ -152,7 +152,7 @@ def test_resumed_turn_still_carries_the_json_contract_instructions(tmp_path, mon
     chat_id = 1
     tc._pending[chat_id] = {"session_id": "sess-1", "trip_draft": None}
 
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": '{"action": "list_trips"}',
         "session_id": "sess-1",
     }) as mock_query:
@@ -178,7 +178,7 @@ def test_yes_confirms_pending_trip_without_calling_relay(tmp_path, monkeypatch):
         },
     }
 
-    with patch("telegram_commands.relay_client.query") as mock_query:
+    with patch("flight_tracker.telegram_commands.relay_client.query") as mock_query:
         reply = tc._dispatch(chat_id, "yes")
 
     mock_query.assert_not_called()
@@ -221,7 +221,7 @@ def test_cancel_trip_action_cancels_matched_trip(tmp_path, monkeypatch):
         return_range_before=1, return_range_after=1,
     )
 
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": f'{{"action": "cancel_trip", "trip_id": {trip_id}}}',
         "session_id": "sess-1",
     }):
@@ -241,7 +241,7 @@ def test_list_trips_action_returns_active_trips(tmp_path, monkeypatch):
         return_range_before=1, return_range_after=1,
     )
 
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": '{"action": "list_trips"}',
         "session_id": "sess-1",
     }):
@@ -255,7 +255,7 @@ def test_set_config_action_applies_edit(tmp_path, monkeypatch):
     tc.CONFIG_PATH.write_text("origins:\n  - AMS\ninterval_minutes: 60\n")
 
     chat_id = 1
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": (
             '{"action": "set_config", "config_edits": '
             '{"sets": [{"key": "interval_minutes", "value": "90"}]}}'
@@ -273,7 +273,7 @@ def test_set_config_action_applies_edit(tmp_path, monkeypatch):
 def test_show_config_action(tmp_path, monkeypatch):
     _router_env(tmp_path, monkeypatch)
 
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": '{"action": "show_config"}',
         "session_id": "sess-1",
     }):
@@ -285,7 +285,7 @@ def test_show_config_action(tmp_path, monkeypatch):
 def test_help_action_returns_help_text(tmp_path, monkeypatch):
     _router_env(tmp_path, monkeypatch)
 
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": '{"action": "help"}',
         "session_id": "sess-1",
     }):
@@ -307,7 +307,7 @@ def test_answer_action_responds_to_a_question_without_losing_the_draft(tmp_path,
     }
     tc._pending[chat_id] = {"session_id": "sess-trip-1", "trip_draft": draft}
 
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": '{"action": "answer", "reply": "AMS and BRU, from your shared settings."}',
         "session_id": "sess-trip-1",
     }):
@@ -320,7 +320,7 @@ def test_answer_action_responds_to_a_question_without_losing_the_draft(tmp_path,
 def test_malformed_router_output_falls_back_to_generic_message(tmp_path, monkeypatch):
     _router_env(tmp_path, monkeypatch)
 
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": '{"action": "not_a_real_action"}',
         "session_id": "sess-1",
     }):
@@ -332,7 +332,7 @@ def test_malformed_router_output_falls_back_to_generic_message(tmp_path, monkeyp
 def test_router_relay_failure_reports_error(tmp_path, monkeypatch):
     _router_env(tmp_path, monkeypatch)
 
-    with patch("telegram_commands.relay_client.query", side_effect=requests.RequestException("boom")):
+    with patch("flight_tracker.telegram_commands.relay_client.query", side_effect=requests.RequestException("boom")):
         reply = tc._dispatch(1, "anything")
 
     assert "couldn't process that" in reply
@@ -355,7 +355,7 @@ def test_router_falls_back_to_fresh_session_when_resume_fails(tmp_path, monkeypa
             raise result
         return result
 
-    with patch("telegram_commands.relay_client.query", side_effect=fake_query) as mock_query:
+    with patch("flight_tracker.telegram_commands.relay_client.query", side_effect=fake_query) as mock_query:
         reply = tc._dispatch(chat_id, "what are my settings?")
 
     assert "origins" in reply
@@ -506,7 +506,7 @@ def test_cancel_trip_action_accepts_string_trip_id(tmp_path, monkeypatch):
         return_range_before=1, return_range_after=1,
     )
 
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": f'{{"action": "cancel_trip", "trip_id": "{trip_id}"}}',
         "session_id": "sess-1",
     }):
@@ -519,7 +519,7 @@ def test_cancel_trip_action_accepts_string_trip_id(tmp_path, monkeypatch):
 def test_bare_clarification_needed_field_is_treated_as_unclear_reply(tmp_path, monkeypatch):
     _router_env(tmp_path, monkeypatch)
 
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": '{"clarification_needed": "Which trip?"}',
         "session_id": "sess-1",
     }):
@@ -538,7 +538,7 @@ def test_edit_trip_action_shows_proposal_and_waits_for_confirmation(tmp_path, mo
         return_range_before=14, return_range_after=16,
     )
 
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": (
             '{"action": "edit_trip", "trip_id": %d, "trip": {'
             '"description": "Sao Paulo Trip", "destinations": ["GRU"], '
@@ -566,7 +566,7 @@ def test_edit_trip_action_accepts_string_trip_id(tmp_path, monkeypatch):
         return_range_before=14, return_range_after=16,
     )
 
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": (
             '{"action": "edit_trip", "trip_id": "%d", "trip": {'
             '"description": "Sao Paulo Trip", "destinations": ["GRU"], '
@@ -603,7 +603,7 @@ def test_yes_confirms_trip_edit_by_updating_not_creating(tmp_path, monkeypatch):
         "trip_draft_id": trip_id,
     }
 
-    with patch("telegram_commands.relay_client.query") as mock_query:
+    with patch("flight_tracker.telegram_commands.relay_client.query") as mock_query:
         reply = tc._dispatch(chat_id, "yes")
 
     mock_query.assert_not_called()
@@ -655,7 +655,7 @@ def test_propose_trip_after_an_edit_does_not_carry_over_trip_draft_id(tmp_path, 
         "trip_draft_id": 4,
     }
 
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": (
             '{"action": "propose_trip", "trip": {'
             '"description": "Beach getaway", "destinations": ["BKK"], '
@@ -713,7 +713,7 @@ def test_trip_history_action_via_router(tmp_path, monkeypatch):
     )
     trips.cancel_trip(trip_id)
 
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": '{"action": "list_trip_history"}',
         "session_id": "sess-1",
     }):
@@ -759,7 +759,7 @@ def test_confirm_trip_keeps_draft_when_create_trip_raises_db_error(monkeypatch):
     }
     tc._pending[chat_id] = {"session_id": "sess-trip-1", "trip_draft": draft}
 
-    with patch("telegram_commands.relay_client.query") as mock_query:
+    with patch("flight_tracker.telegram_commands.relay_client.query") as mock_query:
         reply = tc._dispatch(chat_id, "yes")
 
     mock_query.assert_not_called()
@@ -769,7 +769,7 @@ def test_confirm_trip_keeps_draft_when_create_trip_raises_db_error(monkeypatch):
 
 
 def test_relay_turn_default_persona_includes_general_persona(monkeypatch):
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": "{}", "session_id": "sess-1",
     }) as mock_query:
         tc._relay_turn("hello", "hello", "TASK PROMPT", None)
@@ -779,7 +779,7 @@ def test_relay_turn_default_persona_includes_general_persona(monkeypatch):
 
 
 def test_relay_turn_with_empty_persona_sends_task_prompt_only(monkeypatch):
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": "{}", "session_id": "sess-1",
     }) as mock_query:
         tc._relay_turn("hello", "hello", "TASK PROMPT ONLY", None, persona="")
@@ -800,7 +800,7 @@ def test_analyze_action_starts_separate_analysis_session(tmp_path, monkeypatch):
     def fake_query(*args, **kwargs):
         return responses.pop(0)
 
-    with patch("telegram_commands.relay_client.query", side_effect=fake_query) as mock_query:
+    with patch("flight_tracker.telegram_commands.relay_client.query", side_effect=fake_query) as mock_query:
         reply = tc._dispatch(chat_id, "what's the cheapest fare to Sao Paulo been?")
 
     assert reply == "The cheapest fare to GRU was €410 on 2026-11-02."
@@ -830,7 +830,7 @@ def test_analyze_action_resumes_existing_analysis_session(tmp_path, monkeypatch)
     def fake_query(*args, **kwargs):
         return responses.pop(0)
 
-    with patch("telegram_commands.relay_client.query", side_effect=fake_query) as mock_query:
+    with patch("flight_tracker.telegram_commands.relay_client.query", side_effect=fake_query) as mock_query:
         reply = tc._dispatch(chat_id, "and the most expensive one?")
 
     assert reply == "The most expensive fare was €900."
@@ -856,7 +856,7 @@ def test_analyze_resumed_turn_still_carries_the_json_contract_instructions(tmp_p
     def fake_query(*args, **kwargs):
         return responses.pop(0)
 
-    with patch("telegram_commands.relay_client.query", side_effect=fake_query) as mock_query:
+    with patch("flight_tracker.telegram_commands.relay_client.query", side_effect=fake_query) as mock_query:
         tc._dispatch(chat_id, "and the most expensive one?")
 
     analysis_args, analysis_kwargs = mock_query.call_args_list[1]
@@ -868,7 +868,7 @@ def test_analyze_action_empty_query_asks_for_clarification(tmp_path, monkeypatch
     _router_env(tmp_path, monkeypatch)
 
     chat_id = 5
-    with patch("telegram_commands.relay_client.query", return_value={
+    with patch("flight_tracker.telegram_commands.relay_client.query", return_value={
         "result": '{"action": "analyze"}', "session_id": "sess-router-1",
     }) as mock_query:
         reply = tc._dispatch(chat_id, "tell me about my trips")
@@ -895,7 +895,7 @@ def test_analyze_action_malformed_output_falls_back(tmp_path, monkeypatch):
     def fake_query(*args, **kwargs):
         return responses.pop(0)
 
-    with patch("telegram_commands.relay_client.query", side_effect=fake_query):
+    with patch("flight_tracker.telegram_commands.relay_client.query", side_effect=fake_query):
         reply = tc._dispatch(chat_id, "what's the trend?")
 
     assert "didn't understand" in reply
@@ -915,7 +915,7 @@ def test_analyze_action_relay_failure_reports_error(tmp_path, monkeypatch):
             return responses.pop(0)
         raise requests.RequestException("boom")
 
-    with patch("telegram_commands.relay_client.query", side_effect=fake_query):
+    with patch("flight_tracker.telegram_commands.relay_client.query", side_effect=fake_query):
         reply = tc._dispatch(chat_id, "what's the trend?")
 
     assert "couldn't process that" in reply

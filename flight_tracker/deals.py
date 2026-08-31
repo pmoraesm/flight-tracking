@@ -4,7 +4,7 @@ import statistics
 
 import psycopg
 
-import storage
+from . import storage
 
 MIN_HISTORY_FOR_PERCENTILE = 5
 PERCENTILE_THRESHOLD = 20

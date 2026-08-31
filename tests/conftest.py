@@ -3,8 +3,8 @@ import os
 import psycopg
 import pytest
 
-import storage
-import trips
+from flight_tracker import storage
+from flight_tracker import trips
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",

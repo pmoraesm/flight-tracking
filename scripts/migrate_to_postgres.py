@@ -4,7 +4,7 @@ Run by hand during cutover, with the bot stopped. Reads the Postgres
 target from DATABASE_URL (via storage.py); takes the source SQLite path
 as a command-line argument.
 
-Usage: python migrate_to_postgres.py /data/prices.db
+Usage: python -m scripts.migrate_to_postgres /data/prices.db
 """
 
 import json
@@ -14,7 +14,7 @@ import sys
 import psycopg
 from psycopg.types.json import Json
 
-import storage
+from flight_tracker import storage
 
 
 def _migrate_trips(sqlite_conn, pg_conn) -> None:
@@ -105,6 +105,6 @@ def migrate(sqlite_path: str, database_url: str) -> None:
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("Usage: python migrate_to_postgres.py <path-to-prices.db>")
+        print("Usage: python -m scripts.migrate_to_postgres <path-to-prices.db>")
         sys.exit(1)
     migrate(sys.argv[1], storage.DATABASE_URL)

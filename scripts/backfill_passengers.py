@@ -10,13 +10,13 @@ gathered against.
 
 Run by hand once, after deploying the resolve-and-store change.
 
-Usage: python backfill_passengers.py
+Usage: python -m scripts.backfill_passengers
 """
 
 import psycopg
 from psycopg.types.json import Json
 
-import storage
+from flight_tracker import storage
 
 PRE_CHANGE_DEFAULT = {"adults": 2, "children": 1, "child_age": 6}
 

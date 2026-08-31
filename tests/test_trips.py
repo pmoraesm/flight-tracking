@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 
-import trips
+from flight_tracker import trips
 
 
 def _create(**overrides):

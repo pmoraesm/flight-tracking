@@ -9,7 +9,7 @@ import psycopg
 from dotenv import load_dotenv
 from psycopg.rows import dict_row
 
-load_dotenv(Path(__file__).parent / ".env")
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 logger = logging.getLogger(__name__)
 

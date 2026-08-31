@@ -6,14 +6,14 @@ from pathlib import Path
 import yaml
 from apscheduler.schedulers.blocking import BlockingScheduler
 
-import deals
-import storage
-import tracker
-import trips
-import telegram_commands
-from display import console
-import display
-from notifier import is_configured, notify_alerts
+from flight_tracker import deals
+from flight_tracker import storage
+from flight_tracker import tracker
+from flight_tracker import trips
+from flight_tracker import telegram_commands
+from flight_tracker.display import console
+from flight_tracker import display
+from flight_tracker.notifier import is_configured, notify_alerts
 
 logging.basicConfig(
     level=logging.INFO,

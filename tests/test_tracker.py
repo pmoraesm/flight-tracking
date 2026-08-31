@@ -1,6 +1,6 @@
 from unittest.mock import patch, MagicMock
 
-import tracker
+from flight_tracker import tracker
 
 
 def _fake_flight(price="$100", duration="10h 0m", stops=0, is_best=True, name="Air"):
@@ -41,8 +41,8 @@ def test_search_flights_loops_over_multiple_destinations():
     fake_result.flights = [_fake_flight()]
     fake_result.current_price = "low"
 
-    with patch("tracker.get_flights", return_value=fake_result) as mock_get_flights, \
-         patch("tracker.time.sleep"):
+    with patch("flight_tracker.tracker.get_flights", return_value=fake_result) as mock_get_flights, \
+         patch("flight_tracker.tracker.time.sleep"):
         combos = list(tracker.search_flights(trip))
 
     # 1 origin × 2 destinations × 1 depart date × 1 return date = 2 combos
@@ -59,8 +59,8 @@ def test_search_flights_filters_by_max_duration():
     fake_result.flights = [_fake_flight(duration="14h 0m")]
     fake_result.current_price = "typical"
 
-    with patch("tracker.get_flights", return_value=fake_result), \
-         patch("tracker.time.sleep"):
+    with patch("flight_tracker.tracker.get_flights", return_value=fake_result), \
+         patch("flight_tracker.tracker.time.sleep"):
         combos = list(tracker.search_flights(trip))
 
     assert combos == [[]]
@@ -73,8 +73,8 @@ def test_search_flights_drops_flights_with_unknown_stops():
     fake_result.flights = [_fake_flight(stops="Unknown"), _fake_flight(stops=1)]
     fake_result.current_price = "low"
 
-    with patch("tracker.get_flights", return_value=fake_result), \
-         patch("tracker.time.sleep"):
+    with patch("flight_tracker.tracker.get_flights", return_value=fake_result), \
+         patch("flight_tracker.tracker.time.sleep"):
         combos = list(tracker.search_flights(trip))
 
     assert len(combos[0]) == 1
@@ -88,8 +88,8 @@ def test_search_flights_drops_flights_with_unknown_airline():
     fake_result.flights = [_fake_flight(name="Unknown"), _fake_flight(name="KLM")]
     fake_result.current_price = "low"
 
-    with patch("tracker.get_flights", return_value=fake_result), \
-         patch("tracker.time.sleep"):
+    with patch("flight_tracker.tracker.get_flights", return_value=fake_result), \
+         patch("flight_tracker.tracker.time.sleep"):
         combos = list(tracker.search_flights(trip))
 
     assert len(combos[0]) == 1
@@ -103,8 +103,8 @@ def test_search_flights_skips_a_failing_combo_without_stopping_others():
     fake_result.flights = [_fake_flight()]
     fake_result.current_price = "low"
 
-    with patch("tracker.get_flights", side_effect=[Exception("boom"), fake_result]), \
-         patch("tracker.time.sleep"):
+    with patch("flight_tracker.tracker.get_flights", side_effect=[Exception("boom"), fake_result]), \
+         patch("flight_tracker.tracker.time.sleep"):
         combos = list(tracker.search_flights(trip))
 
     assert len(combos) == 1

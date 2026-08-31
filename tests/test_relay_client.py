@@ -1,7 +1,7 @@
 import json
 from unittest.mock import patch, MagicMock
 
-import relay_client
+from flight_tracker import relay_client
 
 
 def test_relay_host_fallback_when_no_proc_net_route():
@@ -39,7 +39,7 @@ def _fake_response(result_text, session_id):
 
 
 def test_query_sends_session_id_when_provided_and_omits_system_prompt():
-    with patch("relay_client.requests.post", return_value=_fake_response("ok", "sess-2")) as post:
+    with patch("flight_tracker.relay_client.requests.post", return_value=_fake_response("ok", "sess-2")) as post:
         out = relay_client.query("hi", session_id="sess-1")
 
     assert out == {"result": "ok", "session_id": "sess-2"}
@@ -49,7 +49,7 @@ def test_query_sends_session_id_when_provided_and_omits_system_prompt():
 
 
 def test_query_sends_system_prompt_when_no_session_id():
-    with patch("relay_client.requests.post", return_value=_fake_response("ok", "sess-1")) as post:
+    with patch("flight_tracker.relay_client.requests.post", return_value=_fake_response("ok", "sess-1")) as post:
         relay_client.query("hi", system_prompt="be terse")
 
     _, kwargs = post.call_args

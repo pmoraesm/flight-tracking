@@ -1,8 +1,8 @@
 import psycopg
 
-import storage
-import trips
-import deals
+from flight_tracker import storage
+from flight_tracker import trips
+from flight_tracker import deals
 
 
 def _make_trip() -> int:
