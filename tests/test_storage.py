@@ -40,6 +40,27 @@ def test_write_results_tags_rows_with_trip_id():
     assert row == ("AMS", 1200.0, trip_id)
 
 
+def test_write_results_converts_non_integer_stops_to_null():
+    """tracker.py's scraper sometimes can't determine a flight's stop count
+    and returns the string "Unknown" instead of an int — Postgres's real
+    INTEGER column on prices.stops rejects that outright, unlike SQLite's
+    dynamic typing. NULL carries the same "unknown" meaning."""
+    trip_id = _create_trip_row()
+    results = [{
+        "origin": "AMS", "destination": "GRU", "depart_date": "2026-07-11",
+        "return_date": "2026-08-08", "stops": "Unknown",
+        "price_value": 900.0, "is_best": False,
+    }]
+
+    storage.write_results(results, trip_id=trip_id)
+
+    conn = psycopg.connect(storage.DATABASE_URL)
+    stops = conn.execute("SELECT stops FROM prices").fetchone()[0]
+    conn.close()
+
+    assert stops is None
+
+
 def test_write_results_does_nothing_for_empty_list():
     storage.write_results([], trip_id=None)
 

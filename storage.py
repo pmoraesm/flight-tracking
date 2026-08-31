@@ -40,7 +40,7 @@ def write_results(results: list[dict], trip_id: int) -> None:
             r.get("departure"),
             r.get("arrival"),
             r.get("duration"),
-            r.get("stops"),
+            r.get("stops") if isinstance(r.get("stops"), int) else None,
             r.get("price"),
             float(r["price_value"]),
             bool(r.get("is_best", False)),
