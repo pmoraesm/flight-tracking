@@ -133,11 +133,72 @@ def get_active_trips() -> list:
     return [_row_to_trip(row) for row in rows]
 
 
+def get_inactive_trips() -> list:
+    """Cancelled or expired trips, most recently created first."""
+    _expire_overdue_trips()
+    conn = _get_connection()
+    rows = conn.execute(
+        "SELECT * FROM trips WHERE status != 'active' ORDER BY created_at DESC"
+    ).fetchall()
+    conn.close()
+    return [_row_to_trip(row) for row in rows]
+
+
 def cancel_trip(trip_id: int) -> bool:
     conn = _get_connection()
     cur = conn.execute(
         "UPDATE trips SET status = 'cancelled' WHERE id = ? AND status = 'active'",
         (trip_id,),
+    )
+    conn.commit()
+    conn.close()
+    return cur.rowcount > 0
+
+
+def update_trip(
+    trip_id: int,
+    description: str,
+    destinations: list,
+    ideal_date: str,
+    ideal_return_date: str,
+    departure_range_before: int,
+    departure_range_after: int,
+    return_range_before: int,
+    return_range_after: int,
+    origins=None,
+    seat=None,
+    passengers=None,
+    max_duration_hours=None,
+    results_per_query=None,
+    baseline_price_estimate=None,
+) -> bool:
+    conn = _get_connection()
+    cur = conn.execute(
+        """
+        UPDATE trips SET
+            description = ?, destinations = ?, origins = ?, ideal_date = ?,
+            ideal_return_date = ?, departure_range_before = ?, departure_range_after = ?,
+            return_range_before = ?, return_range_after = ?, seat = ?, passengers = ?,
+            max_duration_hours = ?, results_per_query = ?, baseline_price_estimate = ?
+        WHERE id = ? AND status = 'active'
+        """,
+        (
+            description,
+            json.dumps(destinations),
+            json.dumps(origins) if origins else None,
+            ideal_date,
+            ideal_return_date,
+            departure_range_before,
+            departure_range_after,
+            return_range_before,
+            return_range_after,
+            seat,
+            json.dumps(passengers) if passengers else None,
+            max_duration_hours,
+            results_per_query,
+            baseline_price_estimate,
+            trip_id,
+        ),
     )
     conn.commit()
     conn.close()

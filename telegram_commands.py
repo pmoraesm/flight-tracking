@@ -37,6 +37,7 @@ HELP_TEXT = (
     "*Flight Tracker commands*\n\n"
     "/new-trip — start tracking a new trip by describing it in plain language\n"
     "/trips — list active trips and their cheapest price so far\n"
+    "/trip-history — list cancelled or finished trips\n"
     "/cancel-trip <id> — stop tracking a trip\n"
     "/set-config — change a shared setting by describing it in plain language\n"
     "/get — show current shared settings\n"
@@ -54,8 +55,9 @@ _ROUTER_TASK_PROMPT = (
     "message you see is one turn in an ongoing conversation with one "
     "user. Decide what the user wants and respond with nothing but a "
     "single JSON object, shaped exactly like this:\n"
-    '{"action": "propose_trip | revise_trip | cancel_trip | list_trips '
-    '| set_config | show_config | help | answer | unclear", '
+    '{"action": "propose_trip | revise_trip | edit_trip | cancel_trip | '
+    'list_trips | list_trip_history | set_config | show_config | help | '
+    'answer | unclear", '
     '"trip": {"description": "a short 3-6 word label for this trip", '
     '"destinations": ["IATA", ...], "origins": ["IATA", ...] (omit if '
     'not mentioned), "ideal_date": "YYYY-MM-DD", "ideal_return_date": '
@@ -68,12 +70,19 @@ _ROUTER_TASK_PROMPT = (
     '"add_origins": ["IATA"], "remove_origins": ["IATA"]}, '
     '"reply": "text"}\n'
     'Use "propose_trip" to start a new trip, or when there is no '
-    'pending proposal to revise. Use "revise_trip" only to change a '
-    "proposal already shown to the user, and carry over every field "
-    "from it that the new message doesn't change. Use \"cancel_trip\" "
-    "only when the request matches exactly one id in the active trips "
-    "list given below; if it's ambiguous or matches none, use "
-    '"unclear" instead and ask which trip in "reply". Use "set_config" '
+    'pending proposal to revise or edit. Use "edit_trip" to change an '
+    "already-tracked trip from the active trips list given below — set "
+    '"trip_id" to that trip\'s id, and base "trip" on that trip\'s '
+    "current full data with only the requested fields changed, keeping "
+    "everything else identical. Use \"revise_trip\" to keep refining a "
+    "proposal already shown to the user this conversation (started by "
+    'either "propose_trip" or "edit_trip"), carrying over every field '
+    "from it — and its trip_id, if it had one — that the new message "
+    "doesn't change. Use \"cancel_trip\" only when the request matches "
+    "exactly one id in the active trips list; if it's ambiguous or "
+    'matches none, use "unclear" instead and ask which trip in '
+    '"reply". Use "list_trip_history" to list cancelled or finished '
+    'trips. Use "set_config" '
     "for changes to the shared settings given below — dotted paths for "
     "nested keys, e.g. passengers.adults; IATA airport codes for "
     "origins, translating city or airport names yourself. Use "
@@ -179,7 +188,7 @@ def _apply_changes(config, parsed: dict) -> list[str]:
     return changes
 
 
-def _format_proposal(proposal: dict, config: dict) -> str:
+def _format_proposal(proposal: dict, config: dict, editing_trip_id=None) -> str:
     destinations = ", ".join(proposal["destinations"])
     origins = proposal.get("origins")
     if origins:
@@ -198,7 +207,13 @@ def _format_proposal(proposal: dict, config: dict) -> str:
     ]
     if proposal.get("baseline_price_estimate"):
         lines.append(f"Est. fare: ~€{proposal['baseline_price_estimate']:.0f}")
-    lines.append("Reply 'yes' to start tracking, or describe what to change.")
+    if editing_trip_id:
+        lines.append(
+            f"Reply 'yes' to save these changes to trip #{editing_trip_id}, "
+            "or describe what else to change."
+        )
+    else:
+        lines.append("Reply 'yes' to start tracking, or describe what to change.")
     return "\n".join(lines)
 
 
@@ -223,6 +238,21 @@ def _handle_trips_list() -> str:
     return "\n".join(lines)
 
 
+def _handle_trip_history() -> str:
+    inactive = trips.get_inactive_trips()
+    if not inactive:
+        return "No cancelled or finished trips."
+
+    lines = []
+    for trip in inactive:
+        destinations = ", ".join(trip["destinations"])
+        lines.append(
+            f"#{trip['id']} {escape_md(trip['description'])} ({trip['status']}) — "
+            f"{destinations} — {trip['ideal_date']} to {trip['ideal_return_date']}"
+        )
+    return "\n".join(lines)
+
+
 def _handle_cancel_trip(args: list) -> str:
     if not args or not args[0].isdigit():
         return "Usage: /cancel-trip <id>"
@@ -234,7 +264,9 @@ def _handle_cancel_trip(args: list) -> str:
 
 
 def _build_router_prompt(text: str, state: dict, config: dict, active: list) -> str:
-    trips_summary = "\n".join(f"#{t['id']} {t['description']}" for t in active) or "none"
+    # Full fields, not just id + description — editing a trip needs its
+    # current values to compute a partial change against.
+    trips_summary = "\n".join(f"#{t['id']}: {t!r}" for t in active) or "none"
     draft = state.get("trip_draft")
     return (
         f"Shared config (Python dict): {config!r}\n\n"
@@ -246,6 +278,27 @@ def _build_router_prompt(text: str, state: dict, config: dict, active: list) -> 
 
 def _confirm_trip(chat_id, state: dict) -> str:
     trip = state["trip_draft"]
+    edit_id = state.get("trip_draft_id")
+    _pending.pop(chat_id, None)
+
+    if edit_id:
+        updated = trips.update_trip(
+            edit_id,
+            description=trip["description"],
+            destinations=trip["destinations"],
+            ideal_date=trip["ideal_date"],
+            ideal_return_date=trip["ideal_return_date"],
+            departure_range_before=trip.get("departure_range_before", 3),
+            departure_range_after=trip.get("departure_range_after", 3),
+            return_range_before=trip.get("return_range_before", 3),
+            return_range_after=trip.get("return_range_after", 3),
+            origins=trip.get("origins"),
+            baseline_price_estimate=trip.get("baseline_price_estimate"),
+        )
+        if not updated:
+            return f"Trip #{edit_id} is no longer active — nothing to update."
+        return f"Trip #{edit_id} ({escape_md(trip['description'])}) updated."
+
     trip_id = trips.create_trip(
         description=trip["description"],
         destinations=trip["destinations"],
@@ -258,36 +311,52 @@ def _confirm_trip(chat_id, state: dict) -> str:
         origins=trip.get("origins"),
         baseline_price_estimate=trip.get("baseline_price_estimate"),
     )
-    _pending.pop(chat_id, None)
     return f"Trip #{trip_id} ({escape_md(trip['description'])}) is now being tracked."
+
+
+def _coerce_trip_id(value):
+    """int, or a digit-only string coerced to int — the relay sometimes emits trip_id as either."""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value)
+    return None
 
 
 def _execute_action(state: dict, parsed: dict, config: dict) -> str:
     action = parsed.get("action")
     fallback = "Sorry, I didn't understand that — try rephrasing, or /help."
 
-    if action in ("propose_trip", "revise_trip"):
+    if action in ("propose_trip", "revise_trip", "edit_trip"):
         trip = parsed.get("trip") or {}
         required = ("description", "destinations", "ideal_date", "ideal_return_date")
         if not all(trip.get(field) for field in required):
             return "I couldn't work out a full trip from that. Try rephrasing, or /cancel."
         for field in ("departure_range_before", "departure_range_after", "return_range_before", "return_range_after"):
             trip.setdefault(field, 3)
-        state["trip_draft"] = trip
-        return _format_proposal(trip, config)
 
-    raw_trip_id = parsed.get("trip_id")
-    trip_id_valid = isinstance(raw_trip_id, int) or (
-        isinstance(raw_trip_id, str) and raw_trip_id.strip().isdigit()
-    )
-    if action == "cancel_trip" and trip_id_valid:
-        trip_id = int(raw_trip_id)
+        if action == "propose_trip":
+            state["trip_draft_id"] = None
+        elif action == "edit_trip":
+            edit_id = _coerce_trip_id(parsed.get("trip_id"))
+            if edit_id is None:
+                return "Which trip do you want to edit? Check /trips for the id."
+            state["trip_draft_id"] = edit_id
+
+        state["trip_draft"] = trip
+        return _format_proposal(trip, config, editing_trip_id=state.get("trip_draft_id"))
+
+    trip_id = _coerce_trip_id(parsed.get("trip_id"))
+    if action == "cancel_trip" and trip_id is not None:
         if trips.cancel_trip(trip_id):
             return f"Trip #{trip_id} cancelled."
         return f"No active trip with id {trip_id}."
 
     if action == "list_trips":
         return _handle_trips_list()
+
+    if action == "list_trip_history":
+        return _handle_trip_history()
 
     if action == "set_config":
         changes = _apply_changes(config, parsed.get("config_edits") or {})
@@ -312,7 +381,7 @@ def _execute_action(state: dict, parsed: dict, config: dict) -> str:
 
 
 def _route(chat_id, text: str) -> str:
-    state = _pending.setdefault(chat_id, {"session_id": None, "trip_draft": None})
+    state = _pending.setdefault(chat_id, {"session_id": None, "trip_draft": None, "trip_draft_id": None})
 
     if state["trip_draft"] and text.strip().lower() == "yes":
         return _confirm_trip(chat_id, state)
@@ -356,17 +425,20 @@ def _dispatch(chat_id, text: str) -> str:
     if command == "/trips":
         return _handle_trips_list()
 
+    if command == "/trip-history":
+        return _handle_trip_history()
+
     if command == "/cancel-trip":
         return _handle_cancel_trip(stripped.split()[1:])
 
     if command == "/set-config":
         _clear_pending(chat_id)
-        _pending[chat_id] = {"session_id": None, "trip_draft": None}
+        _pending[chat_id] = {"session_id": None, "trip_draft": None, "trip_draft_id": None}
         return "What would you like to change? Describe it in plain language."
 
     if command == "/new-trip":
         _clear_pending(chat_id)
-        _pending[chat_id] = {"session_id": None, "trip_draft": None}
+        _pending[chat_id] = {"session_id": None, "trip_draft": None, "trip_draft_id": None}
         return (
             "Where and when do you want to go? Describe it in plain "
             "language — a place, a kind of destination, specific dates, "

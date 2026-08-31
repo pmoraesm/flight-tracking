@@ -78,6 +78,61 @@ def test_cancel_trip_returns_false_for_unknown_id():
     assert trips.cancel_trip(999) is False
 
 
+def test_update_trip_changes_fields_and_returns_true():
+    trip_id = _create(description="Original", destinations=["BKK"])
+
+    updated = trips.update_trip(
+        trip_id, description="Updated", destinations=["BKK", "HKT"],
+        ideal_date="2026-12-05", ideal_return_date="2026-12-19",
+        departure_range_before=5, departure_range_after=5,
+        return_range_before=1, return_range_after=1,
+    )
+
+    assert updated is True
+    trip = trips.get_trip(trip_id)
+    assert trip["description"] == "Updated"
+    assert trip["destinations"] == ["BKK", "HKT"]
+    assert trip["departure_range_before"] == 5
+
+
+def test_update_trip_returns_false_for_unknown_id():
+    updated = trips.update_trip(
+        999, description="d", destinations=["BKK"],
+        ideal_date="2026-12-05", ideal_return_date="2026-12-19",
+        departure_range_before=1, departure_range_after=1,
+        return_range_before=1, return_range_after=1,
+    )
+
+    assert updated is False
+
+
+def test_update_trip_returns_false_for_cancelled_trip():
+    trip_id = _create()
+    trips.cancel_trip(trip_id)
+
+    updated = trips.update_trip(
+        trip_id, description="d", destinations=["BKK"],
+        ideal_date="2026-12-05", ideal_return_date="2026-12-19",
+        departure_range_before=1, departure_range_after=1,
+        return_range_before=1, return_range_after=1,
+    )
+
+    assert updated is False
+
+
+def test_get_inactive_trips_returns_cancelled_and_expired_only():
+    active_id = _create(description="Active")
+    cancelled_id = _create(description="Cancelled")
+    trips.cancel_trip(cancelled_id)
+    past_return = (date.today() - timedelta(days=10)).isoformat()
+    expired_id = _create(description="Expired", ideal_date="2020-01-01", ideal_return_date=past_return)
+
+    inactive = trips.get_inactive_trips()
+
+    assert active_id not in [t["id"] for t in inactive]
+    assert {t["id"] for t in inactive} == {cancelled_id, expired_id}
+
+
 def test_merge_with_defaults_uses_trip_value_when_present():
     trip = {
         "id": 1, "description": "d", "destinations": ["BKK"],

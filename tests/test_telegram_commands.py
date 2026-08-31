@@ -363,11 +363,13 @@ def test_cancel_clears_pending_state():
 
 def test_new_trip_command_resets_prior_pending_state():
     chat_id = 2
-    tc._pending[chat_id] = {"session_id": "some-session", "trip_draft": {"description": "old"}}
+    tc._pending[chat_id] = {
+        "session_id": "some-session", "trip_draft": {"description": "old"}, "trip_draft_id": 7,
+    }
 
     tc._dispatch(chat_id, "/new-trip")
 
-    assert tc._pending[chat_id] == {"session_id": None, "trip_draft": None}
+    assert tc._pending[chat_id] == {"session_id": None, "trip_draft": None, "trip_draft_id": None}
 
 
 def test_trips_list_shows_no_active_trips_message(tmp_path, monkeypatch):
@@ -514,3 +516,175 @@ def test_bare_clarification_needed_field_is_treated_as_unclear_reply(tmp_path, m
         reply = tc._dispatch(1, "cancel it")
 
     assert reply == "Which trip?"
+
+
+def test_edit_trip_action_shows_proposal_and_waits_for_confirmation(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    trip_id = trips.create_trip(
+        description="Sao Paulo Trip", destinations=["GRU"],
+        ideal_date="2026-12-15", ideal_return_date="2026-12-29",
+        departure_range_before=14, departure_range_after=16,
+        return_range_before=14, return_range_after=16,
+    )
+
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": (
+            '{"action": "edit_trip", "trip_id": %d, "trip": {'
+            '"description": "Sao Paulo Trip", "destinations": ["GRU"], '
+            '"ideal_date": "2026-12-15", "ideal_return_date": "2026-12-29", '
+            '"departure_range_before": 5, "departure_range_after": 5, '
+            '"return_range_before": 14, "return_range_after": 16}}' % trip_id
+        ),
+        "session_id": "sess-1",
+    }):
+        reply = tc._dispatch(2, "make the departure offset +-5 days")
+
+    assert "-5/+5d departure" in reply
+    assert "yes" in reply.lower()
+    assert tc._pending[2]["trip_draft_id"] == trip_id
+    assert tc._pending[2]["trip_draft"]["departure_range_before"] == 5
+
+
+def test_edit_trip_action_accepts_string_trip_id(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    trip_id = trips.create_trip(
+        description="Sao Paulo Trip", destinations=["GRU"],
+        ideal_date="2026-12-15", ideal_return_date="2026-12-29",
+        departure_range_before=14, departure_range_after=16,
+        return_range_before=14, return_range_after=16,
+    )
+
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": (
+            '{"action": "edit_trip", "trip_id": "%d", "trip": {'
+            '"description": "Sao Paulo Trip", "destinations": ["GRU"], '
+            '"ideal_date": "2026-12-15", "ideal_return_date": "2026-12-29", '
+            '"departure_range_before": 5, "departure_range_after": 5, '
+            '"return_range_before": 14, "return_range_after": 16}}' % trip_id
+        ),
+        "session_id": "sess-1",
+    }):
+        tc._dispatch(2, "make the departure offset +-5 days")
+
+    assert tc._pending[2]["trip_draft_id"] == trip_id
+
+
+def test_yes_confirms_trip_edit_by_updating_not_creating(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    trip_id = trips.create_trip(
+        description="Sao Paulo Trip", destinations=["GRU"],
+        ideal_date="2026-12-15", ideal_return_date="2026-12-29",
+        departure_range_before=14, departure_range_after=16,
+        return_range_before=14, return_range_after=16,
+    )
+
+    chat_id = 2
+    tc._pending[chat_id] = {
+        "session_id": "sess-1",
+        "trip_draft": {
+            "description": "Sao Paulo Trip", "destinations": ["GRU"],
+            "ideal_date": "2026-12-15", "ideal_return_date": "2026-12-29",
+            "departure_range_before": 5, "departure_range_after": 5,
+            "return_range_before": 14, "return_range_after": 16,
+        },
+        "trip_draft_id": trip_id,
+    }
+
+    with patch("telegram_commands.relay_client.query") as mock_query:
+        reply = tc._dispatch(chat_id, "yes")
+
+    mock_query.assert_not_called()
+    assert f"Trip #{trip_id}" in reply
+    assert "updated" in reply.lower()
+    assert chat_id not in tc._pending
+    updated = trips.get_trip(trip_id)
+    assert updated["departure_range_before"] == 5
+    assert len(trips.get_active_trips()) == 1
+
+
+def test_propose_trip_after_an_edit_does_not_carry_over_trip_draft_id(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    chat_id = 2
+    tc._pending[chat_id] = {
+        "session_id": "sess-1",
+        "trip_draft": {"description": "old edit draft"},
+        "trip_draft_id": 4,
+    }
+
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": (
+            '{"action": "propose_trip", "trip": {'
+            '"description": "Beach getaway", "destinations": ["BKK"], '
+            '"ideal_date": "2026-12-05", "ideal_return_date": "2026-12-19", '
+            '"departure_range_before": 3, "departure_range_after": 3, '
+            '"return_range_before": 3, "return_range_after": 3}}'
+        ),
+        "session_id": "sess-1",
+    }):
+        tc._dispatch(chat_id, "actually, find me somewhere new")
+
+    assert tc._pending[chat_id]["trip_draft_id"] is None
+
+
+def test_trip_history_command_lists_cancelled_and_expired_trips(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(trips, "_initialized", False)
+
+    trip_id = trips.create_trip(
+        description="Old Rio trip", destinations=["GIG"],
+        ideal_date="2026-12-05", ideal_return_date="2026-12-19",
+        departure_range_before=1, departure_range_after=1,
+        return_range_before=1, return_range_after=1,
+    )
+    trips.cancel_trip(trip_id)
+
+    reply = tc._dispatch(3, "/trip-history")
+
+    assert "Old Rio trip" in reply
+    assert "GIG" in reply
+    assert "cancelled" in reply.lower()
+
+
+def test_trip_history_command_shows_empty_message(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
+    monkeypatch.setattr(trips, "_initialized", False)
+
+    reply = tc._dispatch(3, "/trip-history")
+
+    assert reply == "No cancelled or finished trips."
+
+
+def test_trip_history_command_does_not_clear_pending_draft():
+    chat_id = 3
+    draft = {"description": "Beach getaway"}
+    tc._pending[chat_id] = {"session_id": "sess-1", "trip_draft": draft}
+
+    tc._dispatch(chat_id, "/trip-history")
+
+    assert tc._pending[chat_id] == {"session_id": "sess-1", "trip_draft": draft}
+
+
+def test_trip_history_action_via_router(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    trip_id = trips.create_trip(
+        description="Old Rio trip", destinations=["GIG"],
+        ideal_date="2026-12-05", ideal_return_date="2026-12-19",
+        departure_range_before=1, departure_range_after=1,
+        return_range_before=1, return_range_after=1,
+    )
+    trips.cancel_trip(trip_id)
+
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": '{"action": "list_trip_history"}',
+        "session_id": "sess-1",
+    }):
+        reply = tc._dispatch(3, "what trips have I cancelled?")
+
+    assert "Old Rio trip" in reply
