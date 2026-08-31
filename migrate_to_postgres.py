@@ -46,7 +46,6 @@ def _migrate_trips(sqlite_conn, pg_conn) -> None:
                     row["baseline_price_estimate"], row["status"], row["created_at"],
                 ),
             )
-    pg_conn.commit()
 
 
 def _migrate_prices(sqlite_conn, pg_conn) -> None:
@@ -72,7 +71,6 @@ def _migrate_prices(sqlite_conn, pg_conn) -> None:
                     row["trip_id"],
                 ),
             )
-    pg_conn.commit()
 
 
 def _reset_sequences(pg_conn) -> None:
@@ -85,7 +83,6 @@ def _reset_sequences(pg_conn) -> None:
             "SELECT setval(pg_get_serial_sequence('prices', 'id'), "
             "COALESCE((SELECT MAX(id) FROM prices), 0) + 1, false)"
         )
-    pg_conn.commit()
 
 
 def migrate(sqlite_path: str, database_url: str) -> None:
@@ -97,6 +94,7 @@ def migrate(sqlite_path: str, database_url: str) -> None:
         _migrate_trips(sqlite_conn, pg_conn)
         _migrate_prices(sqlite_conn, pg_conn)
         _reset_sequences(pg_conn)
+        pg_conn.commit()
     finally:
         sqlite_conn.close()
         pg_conn.close()

@@ -680,3 +680,25 @@ def test_cancel_trip_reports_database_error(monkeypatch):
     reply = tc._dispatch(3, "/cancel-trip 7")
 
     assert "couldn't reach the database" in reply
+
+
+def test_confirm_trip_keeps_draft_when_create_trip_raises_db_error(monkeypatch):
+    monkeypatch.setattr(tc.trips, "create_trip", lambda **kwargs: (_ for _ in ()).throw(psycopg.OperationalError("down")))
+
+    chat_id = 2
+    draft = {
+        "description": "Beach getaway", "destinations": ["BKK", "HKT"],
+        "ideal_date": "2026-12-05", "ideal_return_date": "2026-12-19",
+        "departure_range_before": 3, "departure_range_after": 3,
+        "return_range_before": 3, "return_range_after": 3,
+        "baseline_price_estimate": 650,
+    }
+    tc._pending[chat_id] = {"session_id": "sess-trip-1", "trip_draft": draft}
+
+    with patch("telegram_commands.relay_client.query") as mock_query:
+        reply = tc._dispatch(chat_id, "yes")
+
+    mock_query.assert_not_called()
+    assert "couldn't reach the database" in reply
+    assert chat_id in tc._pending
+    assert tc._pending[chat_id]["trip_draft"] == draft

@@ -13,7 +13,7 @@ CREATE TABLE trips (
     passengers              JSONB,
     max_duration_hours      INTEGER,
     results_per_query       INTEGER,
-    baseline_price_estimate REAL,
+    baseline_price_estimate DOUBLE PRECISION,
     status                  TEXT NOT NULL DEFAULT 'active'
                                 CHECK (status IN ('active', 'cancelled', 'expired')),
     created_at              TIMESTAMPTZ NOT NULL
@@ -32,7 +32,7 @@ CREATE TABLE prices (
     duration    TEXT,
     stops       INTEGER,
     price       TEXT,
-    price_value REAL,
+    price_value DOUBLE PRECISION,
     is_best     BOOLEAN,
     trip_id     INTEGER REFERENCES trips(id)
 );

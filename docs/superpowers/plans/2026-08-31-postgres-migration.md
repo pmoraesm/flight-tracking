@@ -1750,10 +1750,12 @@ git commit -m "Attach flight-tracker to returnhub_default alongside the default 
 
 - [ ] **Step 4: On the VPS, create the role and database inside `returnhub-postgres-1`**
 
-Run, using that container's existing superuser (never store this password in the repo):
+Run, using that container's existing superuser (never store this password in the repo). `psql -c` runs its argument as one implicit transaction, and `CREATE DATABASE` cannot run inside a transaction block — issue it as a separate `-c` (or a separate `docker exec`) so it doesn't abort the whole statement, taking the role creation down with it:
 ```bash
 docker exec -it returnhub-postgres-1 psql -U postgres -c "
     CREATE ROLE flight_tracker WITH LOGIN PASSWORD '<generate a strong password>';
+"
+docker exec -it returnhub-postgres-1 psql -U postgres -c "
     CREATE DATABASE flight_tracker OWNER flight_tracker;
 "
 ```
@@ -1765,30 +1767,62 @@ From the flight-tracker checkout on the VPS host:
 docker exec -i returnhub-postgres-1 psql -U flight_tracker -d flight_tracker < schema.sql
 ```
 
-- [ ] **Step 6: Stop the bot and run the data migration**
+- [ ] **Step 6: Add `DATABASE_URL` to the VPS's `.env`**
+
+Add this line to flight-tracker's `.env` on the VPS (gitignored, never in the repo), using the role and password created in Step 4:
+```
+DATABASE_URL=postgresql://flight_tracker:<password>@returnhub-postgres-1:5432/flight_tracker
+```
+Do this now, before Step 8 — the migration run there needs it already in place.
+
+- [ ] **Step 7: Confirm the VPS's `config.yaml` has no legacy single-trip fields**
+
+Check that `config.yaml` on the VPS has no top-level `destination`/`ideal_date`/etc. fields left over from before this migration. `main.py` calls `migrate_config_file(CONFIG_PATH)` at startup with no error handling around it — if legacy fields are still present, the first startup after cutover will call `create_trip` and create a duplicate "Migrated from config.yaml" trip on top of whatever Step 8's data migration already brought over, with no protection if the database happens to be unreachable at that exact moment. If legacy fields are present, remove them from `config.yaml` by hand before proceeding (the trip they'd describe should already exist from the SQLite migration).
+
+- [ ] **Step 8: Stop the bot and run the data migration**
 
 ```bash
 docker compose stop flight-tracker
-docker cp flight-data:/data/prices.db ./prices.db   # or the volume's host path, if bind-mounted
-python3 migrate_to_postgres.py ./prices.db
+docker cp flight-tracker:/data/prices.db ./prices.db   # or the volume's host path, if bind-mounted
 ```
-`migrate_to_postgres.py` reads its Postgres target from `DATABASE_URL`, so export it first, matching the value about to go into `.env`:
+`docker cp` takes a container name, not a volume name — `flight-tracker` is the (now-stopped) container that mounts the data; `flight-data` is only the volume's name.
+
+Before migrating, check for price rows pointing at a trip that no longer exists. `prices.trip_id` now has a real foreign key to `trips(id)`, which the old SQLite schema didn't enforce, so any orphaned row will abort the whole prices-migration phase:
 ```bash
-export DATABASE_URL="postgresql://flight_tracker:<password>@returnhub-postgres-1:5432/flight_tracker"
+sqlite3 ./prices.db "SELECT COUNT(*) FROM prices WHERE trip_id NOT IN (SELECT id FROM trips);"
 ```
+If this returns anything other than `0`, resolve it manually first — either null out those rows' `trip_id` or delete them — before continuing.
 
-- [ ] **Step 7: Add `DATABASE_URL` to the VPS's `.env`**
+`migrate_to_postgres.py` reads its Postgres target from `DATABASE_URL` and needs network access to `returnhub-postgres-1`, which is reachable only by Docker-network DNS name on `returnhub_default` (the design spec gives it no published host port) — the bare VPS host can neither resolve that name nor connect to it, and has no `psycopg` installed besides. Run the script inside a one-off container attached to that network instead of on the host:
+```bash
+docker compose build flight-tracker
+docker run --rm \
+    --network returnhub_default \
+    --env-file .env \
+    -v $(pwd)/prices.db:/data/prices.db \
+    "$(docker compose config --images flight-tracker)" \
+    python3 migrate_to_postgres.py /data/prices.db
+```
+(The `flight-tracker` image already contains `migrate_to_postgres.py` via its `COPY *.py ./` build step; `--env-file .env` picks up the `DATABASE_URL` set in Step 6. A plain `docker run --network` is used here rather than `docker compose run` because `returnhub_default` is no longer declared in `docker-compose.yml` after Task 8's networking fix, so compose has no way to attach a container to it automatically.)
 
-Add the same `DATABASE_URL` line from Step 6 to flight-tracker's `.env` on the VPS (gitignored, never in the repo).
+Once it completes, verify the row counts match between the SQLite source and the new Postgres target:
+```bash
+sqlite3 ./prices.db "SELECT COUNT(*) FROM trips;" "SELECT COUNT(*) FROM prices;"
+docker exec -i returnhub-postgres-1 psql -U flight_tracker -d flight_tracker \
+    -c "SELECT COUNT(*) FROM trips;" -c "SELECT COUNT(*) FROM prices;"
+```
+Both pairs of counts should match; investigate before proceeding if they don't.
 
-- [ ] **Step 8: Confirm the `returnhub_default` network exists, then rebuild and restart**
+- [ ] **Step 9: Confirm the `returnhub_default` network exists, then rebuild, restart, and attach it**
 
 ```bash
 docker network ls | grep returnhub_default
 docker compose up -d --build flight-tracker
+docker network connect returnhub_default flight-tracker
 ```
+The last command is required every time: `flight-tracker` runs with `network_mode: bridge` and no `networks:` list in `docker-compose.yml` (see Task 8's networking fix), so Compose never attaches `returnhub_default` on its own — it has to be joined by hand after each `docker compose up -d --build flight-tracker` that (re)creates the container, since recreating the container drops the manually-attached network.
 
-- [ ] **Step 9: Verify connectivity directly against the running containers**
+- [ ] **Step 10: Verify connectivity directly against the running containers**
 
 ```bash
 docker exec flight-tracker python3 -c "import socket; print(socket.gethostbyname('returnhub-postgres-1'))"
@@ -1805,6 +1839,6 @@ docker logs -f flight-tracker
 ```
 Expected: a normal startup log, with no `Could not load active trips` or `Postgres write failed` error, and the next scheduled check completing.
 
-- [ ] **Step 10: Send a real Telegram command as a final check**
+- [ ] **Step 11: Send a real Telegram command as a final check**
 
 Send `/trips` to the bot from the configured Telegram chat. Expected: the current active trips list, not the "couldn't reach the database" fallback message from Task 6.

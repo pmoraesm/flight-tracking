@@ -33,6 +33,7 @@ def _row_to_trip(row: dict) -> dict:
     trip = dict(row)
     trip["ideal_date"] = trip["ideal_date"].isoformat()
     trip["ideal_return_date"] = trip["ideal_return_date"].isoformat()
+    trip["created_at"] = trip["created_at"].isoformat()
     return trip
 
 

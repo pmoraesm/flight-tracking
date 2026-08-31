@@ -294,7 +294,6 @@ def _build_router_prompt(text: str, state: dict, config: dict, active: list) -> 
 def _confirm_trip(chat_id, state: dict) -> str:
     trip = state["trip_draft"]
     edit_id = state.get("trip_draft_id")
-    _pending.pop(chat_id, None)
 
     try:
         if edit_id:
@@ -311,6 +310,7 @@ def _confirm_trip(chat_id, state: dict) -> str:
                 origins=trip.get("origins"),
                 baseline_price_estimate=trip.get("baseline_price_estimate"),
             )
+            _pending.pop(chat_id, None)
             if not updated:
                 return f"Trip #{edit_id} is no longer active — nothing to update."
             return f"Trip #{edit_id} ({escape_md(trip['description'])}) updated."
@@ -327,6 +327,7 @@ def _confirm_trip(chat_id, state: dict) -> str:
             origins=trip.get("origins"),
             baseline_price_estimate=trip.get("baseline_price_estimate"),
         )
+        _pending.pop(chat_id, None)
         return f"Trip #{trip_id} ({escape_md(trip['description'])}) is now being tracked."
     except psycopg.Error as exc:
         logger.error("Could not save trip: %s", exc)
