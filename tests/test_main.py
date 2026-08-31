@@ -39,8 +39,7 @@ def test_run_check_tags_results_and_routes_good_deals_to_alerts():
          patch("main.display.print_results") as mock_print_results, \
          patch("main.display.print_alerts") as mock_print_alerts, \
          patch("main.is_configured", return_value=True), \
-         patch("main.notify_alerts") as mock_notify_alerts, \
-         patch("main.notify_summary") as mock_notify_summary:
+         patch("main.notify_alerts") as mock_notify_alerts:
         main.run_check()
 
     mock_write.assert_called_once_with(combo, trip_id=1)
@@ -55,8 +54,6 @@ def test_run_check_tags_results_and_routes_good_deals_to_alerts():
     assert alerts_arg[0]["trip_description"] == "Beach trip"
 
     mock_notify_alerts.assert_called_once()
-    summary_arg = mock_notify_summary.call_args[0][0]
-    assert summary_arg[0]["price_value"] == 500
 
 
 def test_run_check_skips_a_trip_that_raises_and_continues():
@@ -84,6 +81,13 @@ def test_run_check_skips_a_trip_that_raises_and_continues():
     all_results_arg = mock_print_results.call_args[0][0]
     assert len(all_results_arg) == 1
     assert all_results_arg[0]["trip_description"] == "Good trip"
+
+
+def test_run_check_never_sends_the_unconditional_summary():
+    """The routine per-check summary is disabled: main no longer holds a
+    reference to notify_summary at all, so there is no path left that
+    could call it."""
+    assert not hasattr(main, "notify_summary")
 
 
 def test_run_check_logs_and_returns_when_loading_trips_fails(caplog):

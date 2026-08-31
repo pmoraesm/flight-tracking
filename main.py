@@ -13,7 +13,7 @@ import trips
 import telegram_commands
 from display import console
 import display
-from notifier import is_configured, notify_alerts, notify_summary
+from notifier import is_configured, notify_alerts
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,12 +43,10 @@ def run_check() -> None:
 
     all_results = []
     all_alerts = []
-    trip_summaries = []
 
     for trip in active_trips:
         try:
             merged = trips.merge_with_defaults(trip, config)
-            trip_results = []
 
             for combo in tracker.search_flights(merged):
                 if not combo:
@@ -64,12 +62,7 @@ def run_check() -> None:
                     if result["is_good_deal"]:
                         all_alerts.append(result)
 
-                trip_results.extend(combo)
                 all_results.extend(combo)
-
-            if trip_results:
-                cheapest = min(trip_results, key=lambda r: r["price_value"])
-                trip_summaries.append(cheapest)
 
         except Exception as exc:
             logger.error("Trip #%s (%s) failed: %s", trip["id"], trip["description"], exc)
@@ -79,7 +72,6 @@ def run_check() -> None:
 
     if is_configured():
         notify_alerts(all_alerts)
-        notify_summary(trip_summaries)
 
 
 def main() -> None:
