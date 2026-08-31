@@ -1,7 +1,8 @@
 """Good-deal detection based on a trip's own historical prices."""
 
-import sqlite3
 import statistics
+
+import psycopg
 
 import storage
 
@@ -11,9 +12,9 @@ BASELINE_DISCOUNT = 0.85
 
 
 def _historical_prices(trip_id: int) -> list:
-    conn = sqlite3.connect(storage.DB_PATH)
+    conn = psycopg.connect(storage.DATABASE_URL)
     rows = conn.execute(
-        "SELECT price_value FROM prices WHERE trip_id = ?", (trip_id,)
+        "SELECT price_value FROM prices WHERE trip_id = %s", (trip_id,)
     ).fetchall()
     conn.close()
     return [row[0] for row in rows]
