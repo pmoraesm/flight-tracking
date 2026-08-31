@@ -11,7 +11,7 @@ import storage
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = storage.DB_PATH
+DATABASE_URL = storage.DATABASE_URL
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS trips (
