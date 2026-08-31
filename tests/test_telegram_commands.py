@@ -823,3 +823,23 @@ def test_analyze_action_relay_failure_reports_error(tmp_path, monkeypatch):
         reply = tc._dispatch(chat_id, "what's the trend?")
 
     assert "couldn't process that" in reply
+
+
+def test_analyze_command_resets_prior_pending_state():
+    chat_id = 6
+    tc._pending[chat_id] = {
+        "session_id": "some-session", "trip_draft": {"description": "old"},
+        "trip_draft_id": 7, "analysis_session_id": "old-analysis-session",
+    }
+
+    reply = tc._dispatch(chat_id, "/analyze")
+
+    assert reply == "What would you like to know about your price history?"
+    assert tc._pending[chat_id] == {
+        "session_id": None, "trip_draft": None, "trip_draft_id": None,
+        "analysis_session_id": None,
+    }
+
+
+def test_help_text_mentions_analyze_command():
+    assert "/analyze" in tc.HELP_TEXT

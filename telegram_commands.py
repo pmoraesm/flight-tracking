@@ -42,11 +42,12 @@ HELP_TEXT = (
     "/cancel-trip <id> — stop tracking a trip\n"
     "/set-config — change a shared setting by describing it in plain language\n"
     "/get — show current shared settings\n"
-    "/cancel — cancel a pending /set-config or /new-trip\n"
+    "/analyze — ask a question about your price history\n"
+    "/cancel — cancel a pending /set-config, /new-trip, or /analyze\n"
     "/help — show this message\n\n"
     "You can also just describe what you want in plain language, any "
-    "time — start a trip, ask about one, cancel one, or change a "
-    "setting.\n\n"
+    "time — start a trip, ask about one, cancel one, change a "
+    "setting, or ask about your price history.\n\n"
     "Changes apply on the next scheduled check, except interval\\_minutes, "
     "which needs a restart."
 )
@@ -532,6 +533,14 @@ def _dispatch(chat_id, text: str) -> str:
             "language — a place, a kind of destination, specific dates, "
             "or a loose period."
         )
+
+    if command == "/analyze":
+        _clear_pending(chat_id)
+        _pending[chat_id] = {
+            "session_id": None, "trip_draft": None, "trip_draft_id": None,
+            "analysis_session_id": None,
+        }
+        return "What would you like to know about your price history?"
 
     if command.startswith("/"):
         return f"Unknown command: {escape_md(command)}\n\n{HELP_TEXT}"
