@@ -185,7 +185,10 @@ def search_flights(trip: dict):
                             passengers=passengers,
                         )
 
-                        flights = [f for f in result.flights if _parse_price(f.price) > 0]
+                        flights = [
+                            f for f in result.flights
+                            if _parse_price(f.price) > 0 and f.stops != "Unknown" and f.name != "Unknown"
+                        ]
 
                         if max_duration_hours:
                             flights = [

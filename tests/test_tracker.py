@@ -66,6 +66,36 @@ def test_search_flights_filters_by_max_duration():
     assert combos == [[]]
 
 
+def test_search_flights_drops_flights_with_unknown_stops():
+    trip = _base_trip()
+
+    fake_result = MagicMock()
+    fake_result.flights = [_fake_flight(stops="Unknown"), _fake_flight(stops=1)]
+    fake_result.current_price = "low"
+
+    with patch("tracker.get_flights", return_value=fake_result), \
+         patch("tracker.time.sleep"):
+        combos = list(tracker.search_flights(trip))
+
+    assert len(combos[0]) == 1
+    assert combos[0][0]["stops"] == 1
+
+
+def test_search_flights_drops_flights_with_unknown_airline():
+    trip = _base_trip()
+
+    fake_result = MagicMock()
+    fake_result.flights = [_fake_flight(name="Unknown"), _fake_flight(name="KLM")]
+    fake_result.current_price = "low"
+
+    with patch("tracker.get_flights", return_value=fake_result), \
+         patch("tracker.time.sleep"):
+        combos = list(tracker.search_flights(trip))
+
+    assert len(combos[0]) == 1
+    assert combos[0][0]["airline"] == "KLM"
+
+
 def test_search_flights_skips_a_failing_combo_without_stopping_others():
     trip = _base_trip(destinations=["BKK", "HKT"])
 
