@@ -433,6 +433,19 @@ def _execute_action(state: dict, parsed: dict, config: dict) -> str:
     if action == "help":
         return HELP_TEXT
 
+    if action == "analyze":
+        query_text = parsed.get("query", "")
+        try:
+            analysis_result, analysis_session_id = _relay_turn(
+                query_text, query_text, _ANALYSIS_PERSONA_PROMPT,
+                state.get("analysis_session_id"), persona="",
+            )
+        except Exception as exc:
+            logger.error("Analysis relay call failed: %s", exc)
+            return f"Sorry, I couldn't process that: {escape_md(exc)}"
+        state["analysis_session_id"] = analysis_session_id
+        return analysis_result.get("reply") or fallback
+
     if action in ("answer", "unclear") and parsed.get("reply"):
         return parsed["reply"]
 

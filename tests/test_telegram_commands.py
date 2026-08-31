@@ -734,3 +734,92 @@ def test_relay_turn_with_empty_persona_sends_task_prompt_only(monkeypatch):
 
     args, kwargs = mock_query.call_args
     assert kwargs["system_prompt"] == "TASK PROMPT ONLY"
+
+
+def test_analyze_action_starts_separate_analysis_session(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    chat_id = 5
+    responses = [
+        {"result": '{"action": "analyze", "query": "What was the cheapest fare to GRU?"}', "session_id": "sess-router-1"},
+        {"result": '{"reply": "The cheapest fare to GRU was €410 on 2026-11-02."}', "session_id": "sess-analysis-1"},
+    ]
+
+    def fake_query(*args, **kwargs):
+        return responses.pop(0)
+
+    with patch("telegram_commands.relay_client.query", side_effect=fake_query) as mock_query:
+        reply = tc._dispatch(chat_id, "what's the cheapest fare to Sao Paulo been?")
+
+    assert reply == "The cheapest fare to GRU was €410 on 2026-11-02."
+    assert tc._pending[chat_id]["session_id"] == "sess-router-1"
+    assert tc._pending[chat_id]["analysis_session_id"] == "sess-analysis-1"
+    assert mock_query.call_count == 2
+
+    analysis_args, analysis_kwargs = mock_query.call_args_list[1]
+    assert analysis_args[0] == "What was the cheapest fare to GRU?"
+    assert analysis_kwargs["system_prompt"] == tc._ANALYSIS_PERSONA_PROMPT
+
+
+def test_analyze_action_resumes_existing_analysis_session(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    chat_id = 5
+    tc._pending[chat_id] = {
+        "session_id": "sess-router-1", "trip_draft": None, "trip_draft_id": None,
+        "analysis_session_id": "sess-analysis-1",
+    }
+
+    responses = [
+        {"result": '{"action": "analyze", "query": "And the most expensive one?"}', "session_id": "sess-router-1"},
+        {"result": '{"reply": "The most expensive fare was €900."}', "session_id": "sess-analysis-1"},
+    ]
+
+    def fake_query(*args, **kwargs):
+        return responses.pop(0)
+
+    with patch("telegram_commands.relay_client.query", side_effect=fake_query) as mock_query:
+        reply = tc._dispatch(chat_id, "and the most expensive one?")
+
+    assert reply == "The most expensive fare was €900."
+    analysis_args, analysis_kwargs = mock_query.call_args_list[1]
+    assert analysis_kwargs["session_id"] == "sess-analysis-1"
+    assert "system_prompt" not in analysis_kwargs
+
+
+def test_analyze_action_malformed_output_falls_back(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    chat_id = 5
+    responses = [
+        {"result": '{"action": "analyze", "query": "trend?"}', "session_id": "sess-router-1"},
+        {"result": "not json", "session_id": "sess-analysis-1"},
+    ]
+
+    def fake_query(*args, **kwargs):
+        return responses.pop(0)
+
+    with patch("telegram_commands.relay_client.query", side_effect=fake_query):
+        reply = tc._dispatch(chat_id, "what's the trend?")
+
+    assert "didn't understand" in reply
+    assert tc._pending[chat_id]["analysis_session_id"] == "sess-analysis-1"
+
+
+def test_analyze_action_relay_failure_reports_error(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    chat_id = 5
+    responses = [
+        {"result": '{"action": "analyze", "query": "trend?"}', "session_id": "sess-router-1"},
+    ]
+
+    def fake_query(*args, **kwargs):
+        if responses:
+            return responses.pop(0)
+        raise requests.RequestException("boom")
+
+    with patch("telegram_commands.relay_client.query", side_effect=fake_query):
+        reply = tc._dispatch(chat_id, "what's the trend?")
+
+    assert "couldn't process that" in reply
