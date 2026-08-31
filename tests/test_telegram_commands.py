@@ -702,3 +702,23 @@ def test_confirm_trip_keeps_draft_when_create_trip_raises_db_error(monkeypatch):
     assert "couldn't reach the database" in reply
     assert chat_id in tc._pending
     assert tc._pending[chat_id]["trip_draft"] == draft
+
+
+def test_relay_turn_default_persona_includes_general_persona(monkeypatch):
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": "{}", "session_id": "sess-1",
+    }) as mock_query:
+        tc._relay_turn("hello", "hello", "TASK PROMPT", None)
+
+    args, kwargs = mock_query.call_args
+    assert kwargs["system_prompt"] == f"{tc.relay_client.PERSONA_PROMPT}\n\nTASK PROMPT"
+
+
+def test_relay_turn_with_empty_persona_sends_task_prompt_only(monkeypatch):
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": "{}", "session_id": "sess-1",
+    }) as mock_query:
+        tc._relay_turn("hello", "hello", "TASK PROMPT ONLY", None, persona="")
+
+    args, kwargs = mock_query.call_args
+    assert kwargs["system_prompt"] == "TASK PROMPT ONLY"

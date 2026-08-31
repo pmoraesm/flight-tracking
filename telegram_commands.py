@@ -102,13 +102,16 @@ _ROUTER_TASK_PROMPT = (
 _pending: dict = {}
 
 
-def _relay_turn(followup_prompt: str, full_prompt: str, task_prompt: str, session_id) -> tuple:
+def _relay_turn(
+    followup_prompt: str, full_prompt: str, task_prompt: str, session_id,
+    persona: str = relay_client.PERSONA_PROMPT,
+) -> tuple:
     """One turn of a relay conversation.
 
     On the first turn (no session_id) or if resuming session_id fails,
-    sends full_prompt with the persona + task_prompt as system_prompt. On
-    a successful resume, sends only followup_prompt — the relay's session
-    already has everything else.
+    sends full_prompt with persona + task_prompt as system_prompt (just
+    task_prompt if persona is ""). On a successful resume, sends only
+    followup_prompt — the relay's session already has everything else.
     """
     if session_id:
         try:
@@ -117,7 +120,7 @@ def _relay_turn(followup_prompt: str, full_prompt: str, task_prompt: str, sessio
         except requests.RequestException:
             logger.warning("Relay session %s failed to resume — starting fresh.", session_id)
 
-    system_prompt = f"{relay_client.PERSONA_PROMPT}\n\n{task_prompt}"
+    system_prompt = f"{persona}\n\n{task_prompt}" if persona else task_prompt
     response = relay_client.query(full_prompt, system_prompt=system_prompt)
     return relay_client.extract_json(response["result"]), response["session_id"]
 
