@@ -52,6 +52,9 @@ def _migrate_prices(sqlite_conn, pg_conn) -> None:
     rows = sqlite_conn.execute("SELECT * FROM prices ORDER BY id").fetchall()
     with pg_conn.cursor() as cur:
         for row in rows:
+            stops = row["stops"]
+            if not isinstance(stops, int):
+                stops = None
             cur.execute(
                 """
                 INSERT INTO prices (
@@ -65,7 +68,7 @@ def _migrate_prices(sqlite_conn, pg_conn) -> None:
                 (
                     row["id"], row["checked_at"], row["origin"], row["destination"],
                     row["depart_date"], row["return_date"], row["airline"],
-                    row["departure"], row["arrival"], row["duration"], row["stops"],
+                    row["departure"], row["arrival"], row["duration"], stops,
                     row["price"], row["price_value"],
                     bool(row["is_best"]) if row["is_best"] is not None else None,
                     row["trip_id"],

@@ -60,6 +60,33 @@ def test_migrate_preserves_ids_and_trip_reference(tmp_path):
     assert price_row == (3, 7, 900.0)
 
 
+def test_migrate_converts_non_integer_stops_to_null(tmp_path):
+    """tracker.py's scraper sometimes can't determine a flight's stop count
+    and stores the string 'Unknown' instead of an int — SQLite's dynamic
+    typing allows this despite the declared INTEGER column, but Postgres's
+    real INTEGER column rejects it outright. NULL is the correct target
+    value: it's the same "we don't know" meaning, and the column is
+    nullable."""
+    sqlite_path = tmp_path / "prices.db"
+    _build_sqlite_fixture(sqlite_path)
+    conn = sqlite3.connect(sqlite_path)
+    conn.execute(
+        "INSERT INTO prices (id, checked_at, origin, destination, depart_date, "
+        "stops, price_value, trip_id) VALUES "
+        "(4, '2026-01-01T00:00:00+00:00', 'AMS', 'GRU', '2026-07-11', "
+        "'Unknown', 950.0, 7)"
+    )
+    conn.commit()
+    conn.close()
+
+    migrate_to_postgres.migrate(str(sqlite_path), storage.DATABASE_URL)
+
+    pg_conn = psycopg.connect(storage.DATABASE_URL)
+    stops = pg_conn.execute("SELECT stops FROM prices WHERE id = 4").fetchone()[0]
+    pg_conn.close()
+    assert stops is None
+
+
 def test_migrate_resets_sequence_so_new_trip_gets_higher_id(tmp_path):
     sqlite_path = tmp_path / "prices.db"
     _build_sqlite_fixture(sqlite_path)
