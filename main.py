@@ -35,11 +35,17 @@ def run_check() -> None:
 
     console.print("\n[bold cyan]Starting price check…[/bold cyan]")
 
+    try:
+        active_trips = trips.get_active_trips()
+    except Exception as exc:
+        logger.error("Could not load active trips: %s", exc)
+        return
+
     all_results = []
     all_alerts = []
     trip_summaries = []
 
-    for trip in trips.get_active_trips():
+    for trip in active_trips:
         try:
             merged = trips.merge_with_defaults(trip, config)
             trip_results = []

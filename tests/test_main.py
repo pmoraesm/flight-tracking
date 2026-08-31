@@ -84,3 +84,14 @@ def test_run_check_skips_a_trip_that_raises_and_continues():
     all_results_arg = mock_print_results.call_args[0][0]
     assert len(all_results_arg) == 1
     assert all_results_arg[0]["trip_description"] == "Good trip"
+
+
+def test_run_check_logs_and_returns_when_loading_trips_fails(caplog):
+    with patch("main.load_config", return_value={}), \
+         patch("main.trips.get_active_trips", side_effect=RuntimeError("db down")), \
+         patch("main.display.print_results") as mock_print_results:
+        with caplog.at_level("ERROR"):
+            main.run_check()
+
+    mock_print_results.assert_not_called()
+    assert any("db down" in r.message for r in caplog.records)
