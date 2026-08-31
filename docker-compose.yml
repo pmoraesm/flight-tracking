@@ -10,5 +10,20 @@ services:
       - flight-data:/data
       - ./config.yaml:/app/config.yaml
 
+  postgres:
+    image: postgres:16-alpine
+    container_name: flight-tracker-postgres
+    profiles: ["dev"]
+    environment:
+      POSTGRES_DB: flight_tracker
+      POSTGRES_USER: flight_tracker
+      POSTGRES_PASSWORD: flight_tracker_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - flight-tracker-postgres-data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
+
 volumes:
   flight-data:
+  flight-tracker-postgres-data:
