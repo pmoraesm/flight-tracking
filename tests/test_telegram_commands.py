@@ -357,6 +357,15 @@ def test_cancel_clears_pending_state():
     assert chat_id not in tc._pending
 
 
+def test_router_prompt_lists_analyze_action():
+    assert "analyze" in tc._ROUTER_TASK_PROMPT
+
+
+def test_analysis_persona_names_the_readonly_role_and_no_password():
+    assert "flight_tracker_readonly" in tc._ANALYSIS_PERSONA_PROMPT
+    assert "password" not in tc._ANALYSIS_PERSONA_PROMPT.lower().replace("no password needed", "")
+
+
 def test_new_trip_command_resets_prior_pending_state():
     chat_id = 2
     tc._pending[chat_id] = {
@@ -365,7 +374,10 @@ def test_new_trip_command_resets_prior_pending_state():
 
     tc._dispatch(chat_id, "/new-trip")
 
-    assert tc._pending[chat_id] == {"session_id": None, "trip_draft": None, "trip_draft_id": None}
+    assert tc._pending[chat_id] == {
+        "session_id": None, "trip_draft": None, "trip_draft_id": None,
+        "analysis_session_id": None,
+    }
 
 
 def test_trips_list_shows_no_active_trips_message():

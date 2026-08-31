@@ -58,7 +58,7 @@ _ROUTER_TASK_PROMPT = (
     "single JSON object, shaped exactly like this:\n"
     '{"action": "propose_trip | revise_trip | edit_trip | cancel_trip | '
     'list_trips | list_trip_history | set_config | show_config | help | '
-    'answer | unclear", '
+    'answer | analyze | unclear", '
     '"trip": {"description": "a short 3-6 word label for this trip", '
     '"destinations": ["IATA", ...], "origins": ["IATA", ...] (omit if '
     'not mentioned), "ideal_date": "YYYY-MM-DD", "ideal_return_date": '
@@ -69,6 +69,7 @@ _ROUTER_TASK_PROMPT = (
     '"trip_id": int, '
     '"config_edits": {"sets": [{"key": "dotted.path", "value": "string"}], '
     '"add_origins": ["IATA"], "remove_origins": ["IATA"]}, '
+    '"query": "text", '
     '"reply": "text"}\n'
     'Use "propose_trip" to start a new trip, or when there is no '
     'pending proposal to revise or edit. Use "edit_trip" to change an '
@@ -89,7 +90,15 @@ _ROUTER_TASK_PROMPT = (
     "origins, translating city or airport names yourself. Use "
     '"answer" to respond to a question about the pending proposal, the '
     'active trips, or the shared settings, using the data given below '
-    '— put the answer in "reply". Use "unclear" when the request is '
+    '— put the answer in "reply". Use "analyze" when the user is '
+    "asking a question about price history, trends, or any "
+    "data-driven analysis of trips — anything that needs real "
+    "historical numbers to answer well, not just the active trips "
+    'list already given to you. Put a self-contained restatement of '
+    'the question in "query", resolving any references ("that trip", '
+    '"the Sao Paulo one") against the active trips list above so it '
+    "can be understood without this conversation's context. Use "
+    '"unclear" when the request is '
     "ambiguous or names something that doesn't exist, and ask a short "
     'clarifying question in "reply". Omit fields that don\'t apply to '
     "the chosen action. For a loose date description (a month, \"a "
@@ -97,6 +106,31 @@ _ROUTER_TASK_PROMPT = (
     "in the middle of it and a return date matching the trip length "
     "implied, with ranges wide enough to cover the described period. "
     "Default range fields to 3 when not implied by the request."
+)
+
+_ANALYSIS_PERSONA_PROMPT = (
+    "You are the data-analysis backend for a personal "
+    "flight-price-tracking assistant. You have read-only access to its "
+    "PostgreSQL database via `psql -h 127.0.0.1 -U "
+    "flight_tracker_readonly -d flight_tracker` (no password needed — "
+    "already configured). The schema:\n\n"
+    "`trips(id, description, destinations JSONB, origins JSONB, "
+    "ideal_date DATE, ideal_return_date DATE, departure_range_before "
+    "INT, departure_range_after INT, return_range_before INT, "
+    "return_range_after INT, seat TEXT, passengers JSONB, "
+    "max_duration_hours INT, results_per_query INT, "
+    "baseline_price_estimate DOUBLE PRECISION, status TEXT, created_at "
+    "TIMESTAMPTZ)`\n\n"
+    "`prices(id, checked_at TIMESTAMPTZ, origin TEXT, destination "
+    "TEXT, depart_date DATE, return_date DATE, airline TEXT, "
+    "departure TEXT, arrival TEXT, duration TEXT, stops INT, price "
+    "TEXT, price_value DOUBLE PRECISION, is_best BOOLEAN, trip_id INT "
+    "REFERENCES trips)`\n\n"
+    "Answer the user's question by querying this data. Use SELECT "
+    "only — you have no write access, and none is needed. If the "
+    "database is unreachable or a query fails, say so plainly in your "
+    "reply rather than retrying indefinitely. Respond with nothing "
+    'but a single JSON object: {"reply": "text"}.'
 )
 
 _pending: dict = {}
@@ -409,7 +443,10 @@ def _execute_action(state: dict, parsed: dict, config: dict) -> str:
 
 
 def _route(chat_id, text: str) -> str:
-    state = _pending.setdefault(chat_id, {"session_id": None, "trip_draft": None, "trip_draft_id": None})
+    state = _pending.setdefault(
+        chat_id,
+        {"session_id": None, "trip_draft": None, "trip_draft_id": None, "analysis_session_id": None},
+    )
 
     if state["trip_draft"] and text.strip().lower() == "yes":
         return _confirm_trip(chat_id, state)
@@ -465,12 +502,18 @@ def _dispatch(chat_id, text: str) -> str:
 
     if command == "/set-config":
         _clear_pending(chat_id)
-        _pending[chat_id] = {"session_id": None, "trip_draft": None, "trip_draft_id": None}
+        _pending[chat_id] = {
+            "session_id": None, "trip_draft": None, "trip_draft_id": None,
+            "analysis_session_id": None,
+        }
         return "What would you like to change? Describe it in plain language."
 
     if command == "/new-trip":
         _clear_pending(chat_id)
-        _pending[chat_id] = {"session_id": None, "trip_draft": None, "trip_draft_id": None}
+        _pending[chat_id] = {
+            "session_id": None, "trip_draft": None, "trip_draft_id": None,
+            "analysis_session_id": None,
+        }
         return (
             "Where and when do you want to go? Describe it in plain "
             "language — a place, a kind of destination, specific dates, "
