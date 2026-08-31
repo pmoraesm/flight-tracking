@@ -27,9 +27,7 @@ return_range_after: 7
 seat: "economy"
 
 passengers:
-  adults: 2
-  children: 1       # child aged 2-11
-  child_age: 6
+  adults: 1
 
 # Alert when any result drops below this price (EUR or local currency)
 # Set to 0 to disable

@@ -189,6 +189,28 @@ def test_yes_confirms_pending_trip_without_calling_relay(tmp_path, monkeypatch):
     assert active[0]["description"] == "Beach getaway"
 
 
+def test_confirm_trip_stores_resolved_passengers_from_config(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("origins:\n  - AMS\npassengers:\n  adults: 2\n  children: 1\n")
+    monkeypatch.setattr(tc, "CONFIG_PATH", config_path)
+
+    chat_id = 2
+    tc._pending[chat_id] = {
+        "session_id": "sess-trip-1",
+        "trip_draft": {
+            "description": "Beach getaway", "destinations": ["BKK", "HKT"],
+            "ideal_date": "2026-12-05", "ideal_return_date": "2026-12-19",
+            "departure_range_before": 3, "departure_range_after": 3,
+            "return_range_before": 3, "return_range_after": 3,
+        },
+    }
+
+    tc._dispatch(chat_id, "yes")
+
+    active = trips.get_active_trips()
+    assert active[0]["passengers"] == {"adults": 2, "children": 1}
+
+
 def test_cancel_trip_action_cancels_matched_trip(tmp_path, monkeypatch):
     _router_env(tmp_path, monkeypatch)
 
@@ -591,6 +613,36 @@ def test_yes_confirms_trip_edit_by_updating_not_creating(tmp_path, monkeypatch):
     updated = trips.get_trip(trip_id)
     assert updated["departure_range_before"] == 5
     assert len(trips.get_active_trips()) == 1
+
+
+def test_confirm_trip_edit_stores_resolved_passengers_from_config(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("origins:\n  - AMS\npassengers:\n  adults: 2\n  children: 1\n")
+    monkeypatch.setattr(tc, "CONFIG_PATH", config_path)
+
+    trip_id = trips.create_trip(
+        description="Sao Paulo Trip", destinations=["GRU"],
+        ideal_date="2026-12-15", ideal_return_date="2026-12-29",
+        departure_range_before=14, departure_range_after=16,
+        return_range_before=14, return_range_after=16,
+    )
+
+    chat_id = 2
+    tc._pending[chat_id] = {
+        "session_id": "sess-1",
+        "trip_draft": {
+            "description": "Sao Paulo Trip", "destinations": ["GRU"],
+            "ideal_date": "2026-12-15", "ideal_return_date": "2026-12-29",
+            "departure_range_before": 5, "departure_range_after": 5,
+            "return_range_before": 14, "return_range_after": 16,
+        },
+        "trip_draft_id": trip_id,
+    }
+
+    tc._dispatch(chat_id, "yes")
+
+    updated = trips.get_trip(trip_id)
+    assert updated["passengers"] == {"adults": 2, "children": 1}
 
 
 def test_propose_trip_after_an_edit_does_not_carry_over_trip_draft_id(tmp_path, monkeypatch):

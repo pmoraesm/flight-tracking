@@ -338,6 +338,7 @@ def _build_router_prompt(text: str, state: dict, config: dict, active: list) -> 
 def _confirm_trip(chat_id, state: dict) -> str:
     trip = state["trip_draft"]
     edit_id = state.get("trip_draft_id")
+    passengers = trip.get("passengers") or _load_config().get("passengers", {})
 
     try:
         if edit_id:
@@ -353,6 +354,7 @@ def _confirm_trip(chat_id, state: dict) -> str:
                 return_range_after=trip.get("return_range_after", 3),
                 origins=trip.get("origins"),
                 baseline_price_estimate=trip.get("baseline_price_estimate"),
+                passengers=passengers,
             )
             _pending.pop(chat_id, None)
             if not updated:
@@ -370,6 +372,7 @@ def _confirm_trip(chat_id, state: dict) -> str:
             return_range_after=trip.get("return_range_after", 3),
             origins=trip.get("origins"),
             baseline_price_estimate=trip.get("baseline_price_estimate"),
+            passengers=passengers,
         )
         _pending.pop(chat_id, None)
         return f"Trip #{trip_id} ({escape_md(trip['description'])}) is now being tracked."
