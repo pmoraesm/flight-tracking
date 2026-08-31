@@ -1,3 +1,4 @@
+import psycopg
 import requests
 from unittest.mock import patch
 
@@ -12,11 +13,6 @@ def setup_function():
 
 
 def _router_env(tmp_path, monkeypatch, origins=("AMS",)):
-    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(storage, "_initialized", False)
-    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(trips, "_initialized", False)
-    storage._get_connection().close()
     config_path = tmp_path / "config.yaml"
     config_path.write_text("origins:\n" + "".join(f"  - {o}\n" for o in origins))
     monkeypatch.setattr(tc, "CONFIG_PATH", config_path)
@@ -372,21 +368,13 @@ def test_new_trip_command_resets_prior_pending_state():
     assert tc._pending[chat_id] == {"session_id": None, "trip_draft": None, "trip_draft_id": None}
 
 
-def test_trips_list_shows_no_active_trips_message(tmp_path, monkeypatch):
-    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(trips, "_initialized", False)
-
+def test_trips_list_shows_no_active_trips_message():
     reply = tc._dispatch(3, "/trips")
 
     assert reply == "No active trips."
 
 
-def test_trips_list_shows_cheapest_price(tmp_path, monkeypatch):
-    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(trips, "_initialized", False)
-
+def test_trips_list_shows_cheapest_price():
     trip_id = trips.create_trip(
         description="Beach getaway", destinations=["BKK"],
         ideal_date="2026-12-05", ideal_return_date="2026-12-19",
@@ -404,11 +392,7 @@ def test_trips_list_shows_cheapest_price(tmp_path, monkeypatch):
     assert "€650" in reply
 
 
-def test_cancel_trip_marks_trip_cancelled(tmp_path, monkeypatch):
-    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(trips, "_initialized", False)
-
+def test_cancel_trip_marks_trip_cancelled():
     trip_id = trips.create_trip(
         description="Beach getaway", destinations=["BKK"],
         ideal_date="2026-12-05", ideal_return_date="2026-12-19",
@@ -422,11 +406,7 @@ def test_cancel_trip_marks_trip_cancelled(tmp_path, monkeypatch):
     assert trips.get_active_trips() == []
 
 
-def test_cancel_trip_unknown_id(tmp_path, monkeypatch):
-    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(trips, "_initialized", False)
-
+def test_cancel_trip_unknown_id():
     reply = tc._dispatch(3, "/cancel-trip 999")
     assert "No active trip" in reply
 
@@ -460,11 +440,7 @@ def test_trips_command_does_not_clear_pending_draft(tmp_path, monkeypatch):
     assert tc._pending[chat_id] == {"session_id": "sess-1", "trip_draft": draft}
 
 
-def test_cancel_trip_command_does_not_clear_pending_draft(tmp_path, monkeypatch):
-    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(trips, "_initialized", False)
-
+def test_cancel_trip_command_does_not_clear_pending_draft():
     chat_id = 3
     draft = {"description": "Beach getaway"}
     tc._pending[chat_id] = {"session_id": "sess-1", "trip_draft": draft}
@@ -630,11 +606,7 @@ def test_propose_trip_after_an_edit_does_not_carry_over_trip_draft_id(tmp_path, 
     assert tc._pending[chat_id]["trip_draft_id"] is None
 
 
-def test_trip_history_command_lists_cancelled_and_expired_trips(tmp_path, monkeypatch):
-    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(trips, "_initialized", False)
-
+def test_trip_history_command_lists_cancelled_and_expired_trips():
     trip_id = trips.create_trip(
         description="Old Rio trip", destinations=["GIG"],
         ideal_date="2026-12-05", ideal_return_date="2026-12-19",
@@ -650,11 +622,7 @@ def test_trip_history_command_lists_cancelled_and_expired_trips(tmp_path, monkey
     assert "cancelled" in reply.lower()
 
 
-def test_trip_history_command_shows_empty_message(tmp_path, monkeypatch):
-    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(trips, "DB_PATH", tmp_path / "prices.db")
-    monkeypatch.setattr(trips, "_initialized", False)
-
+def test_trip_history_command_shows_empty_message():
     reply = tc._dispatch(3, "/trip-history")
 
     assert reply == "No cancelled or finished trips."
@@ -688,3 +656,27 @@ def test_trip_history_action_via_router(tmp_path, monkeypatch):
         reply = tc._dispatch(3, "what trips have I cancelled?")
 
     assert "Old Rio trip" in reply
+
+
+def test_trips_list_reports_database_error(monkeypatch):
+    monkeypatch.setattr(tc.trips, "get_active_trips", lambda: (_ for _ in ()).throw(psycopg.OperationalError("down")))
+
+    reply = tc._dispatch(3, "/trips")
+
+    assert "couldn't reach the database" in reply
+
+
+def test_trip_history_reports_database_error(monkeypatch):
+    monkeypatch.setattr(tc.trips, "get_inactive_trips", lambda: (_ for _ in ()).throw(psycopg.OperationalError("down")))
+
+    reply = tc._dispatch(3, "/trip-history")
+
+    assert "couldn't reach the database" in reply
+
+
+def test_cancel_trip_reports_database_error(monkeypatch):
+    monkeypatch.setattr(tc.trips, "cancel_trip", lambda trip_id: (_ for _ in ()).throw(psycopg.OperationalError("down")))
+
+    reply = tc._dispatch(3, "/cancel-trip 7")
+
+    assert "couldn't reach the database" in reply

@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 import requests
+import psycopg
 from ruamel.yaml import YAML
 
 import deals
@@ -222,35 +223,43 @@ def _handle_get() -> str:
 
 
 def _handle_trips_list() -> str:
-    active = trips.get_active_trips()
-    if not active:
-        return "No active trips."
+    try:
+        active = trips.get_active_trips()
+        if not active:
+            return "No active trips."
 
-    lines = []
-    for trip in active:
-        cheapest = deals.cheapest_price(trip["id"])
-        price_note = f"€{cheapest:.0f}" if cheapest is not None else "no data yet"
-        lines.append(
-            f"#{trip['id']} {trip['description']} — "
-            f"{trip['ideal_date']} to {trip['ideal_return_date']} — "
-            f"cheapest so far: {price_note}"
-        )
-    return "\n".join(lines)
+        lines = []
+        for trip in active:
+            cheapest = deals.cheapest_price(trip["id"])
+            price_note = f"€{cheapest:.0f}" if cheapest is not None else "no data yet"
+            lines.append(
+                f"#{trip['id']} {trip['description']} — "
+                f"{trip['ideal_date']} to {trip['ideal_return_date']} — "
+                f"cheapest so far: {price_note}"
+            )
+        return "\n".join(lines)
+    except psycopg.Error as exc:
+        logger.error("Could not load active trips: %s", exc)
+        return "Sorry, I couldn't reach the database. Try again shortly."
 
 
 def _handle_trip_history() -> str:
-    inactive = trips.get_inactive_trips()
-    if not inactive:
-        return "No cancelled or finished trips."
+    try:
+        inactive = trips.get_inactive_trips()
+        if not inactive:
+            return "No cancelled or finished trips."
 
-    lines = []
-    for trip in inactive:
-        destinations = ", ".join(trip["destinations"])
-        lines.append(
-            f"#{trip['id']} {escape_md(trip['description'])} ({trip['status']}) — "
-            f"{destinations} — {trip['ideal_date']} to {trip['ideal_return_date']}"
-        )
-    return "\n".join(lines)
+        lines = []
+        for trip in inactive:
+            destinations = ", ".join(trip["destinations"])
+            lines.append(
+                f"#{trip['id']} {escape_md(trip['description'])} ({trip['status']}) — "
+                f"{destinations} — {trip['ideal_date']} to {trip['ideal_return_date']}"
+            )
+        return "\n".join(lines)
+    except psycopg.Error as exc:
+        logger.error("Could not load trip history: %s", exc)
+        return "Sorry, I couldn't reach the database. Try again shortly."
 
 
 def _handle_cancel_trip(args: list) -> str:
@@ -258,7 +267,13 @@ def _handle_cancel_trip(args: list) -> str:
         return "Usage: /cancel-trip <id>"
 
     trip_id = int(args[0])
-    if trips.cancel_trip(trip_id):
+    try:
+        cancelled = trips.cancel_trip(trip_id)
+    except psycopg.Error as exc:
+        logger.error("Could not cancel trip #%s: %s", trip_id, exc)
+        return "Sorry, I couldn't reach the database. Try again shortly."
+
+    if cancelled:
         return f"Trip #{trip_id} cancelled."
     return f"No active trip with id {trip_id}."
 
@@ -281,9 +296,26 @@ def _confirm_trip(chat_id, state: dict) -> str:
     edit_id = state.get("trip_draft_id")
     _pending.pop(chat_id, None)
 
-    if edit_id:
-        updated = trips.update_trip(
-            edit_id,
+    try:
+        if edit_id:
+            updated = trips.update_trip(
+                edit_id,
+                description=trip["description"],
+                destinations=trip["destinations"],
+                ideal_date=trip["ideal_date"],
+                ideal_return_date=trip["ideal_return_date"],
+                departure_range_before=trip.get("departure_range_before", 3),
+                departure_range_after=trip.get("departure_range_after", 3),
+                return_range_before=trip.get("return_range_before", 3),
+                return_range_after=trip.get("return_range_after", 3),
+                origins=trip.get("origins"),
+                baseline_price_estimate=trip.get("baseline_price_estimate"),
+            )
+            if not updated:
+                return f"Trip #{edit_id} is no longer active — nothing to update."
+            return f"Trip #{edit_id} ({escape_md(trip['description'])}) updated."
+
+        trip_id = trips.create_trip(
             description=trip["description"],
             destinations=trip["destinations"],
             ideal_date=trip["ideal_date"],
@@ -295,23 +327,10 @@ def _confirm_trip(chat_id, state: dict) -> str:
             origins=trip.get("origins"),
             baseline_price_estimate=trip.get("baseline_price_estimate"),
         )
-        if not updated:
-            return f"Trip #{edit_id} is no longer active — nothing to update."
-        return f"Trip #{edit_id} ({escape_md(trip['description'])}) updated."
-
-    trip_id = trips.create_trip(
-        description=trip["description"],
-        destinations=trip["destinations"],
-        ideal_date=trip["ideal_date"],
-        ideal_return_date=trip["ideal_return_date"],
-        departure_range_before=trip.get("departure_range_before", 3),
-        departure_range_after=trip.get("departure_range_after", 3),
-        return_range_before=trip.get("return_range_before", 3),
-        return_range_after=trip.get("return_range_after", 3),
-        origins=trip.get("origins"),
-        baseline_price_estimate=trip.get("baseline_price_estimate"),
-    )
-    return f"Trip #{trip_id} ({escape_md(trip['description'])}) is now being tracked."
+        return f"Trip #{trip_id} ({escape_md(trip['description'])}) is now being tracked."
+    except psycopg.Error as exc:
+        logger.error("Could not save trip: %s", exc)
+        return "Sorry, I couldn't reach the database. Try again shortly."
 
 
 def _coerce_trip_id(value):
@@ -348,7 +367,12 @@ def _execute_action(state: dict, parsed: dict, config: dict) -> str:
 
     trip_id = _coerce_trip_id(parsed.get("trip_id"))
     if action == "cancel_trip" and trip_id is not None:
-        if trips.cancel_trip(trip_id):
+        try:
+            cancelled = trips.cancel_trip(trip_id)
+        except psycopg.Error as exc:
+            logger.error("Could not cancel trip #%s: %s", trip_id, exc)
+            return "Sorry, I couldn't reach the database. Try again shortly."
+        if cancelled:
             return f"Trip #{trip_id} cancelled."
         return f"No active trip with id {trip_id}."
 
@@ -387,7 +411,11 @@ def _route(chat_id, text: str) -> str:
         return _confirm_trip(chat_id, state)
 
     config = _load_config()
-    active = trips.get_active_trips()
+    try:
+        active = trips.get_active_trips()
+    except psycopg.Error as exc:
+        logger.error("Could not load active trips: %s", exc)
+        return "Sorry, I couldn't reach the database. Try again shortly."
     # The router's JSON contract goes in the prompt text itself, not only
     # the system prompt — a resumed relay session doesn't reliably keep
     # enforcing a system prompt from an earlier turn, and drifts into
