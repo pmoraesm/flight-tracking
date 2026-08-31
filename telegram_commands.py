@@ -319,7 +319,11 @@ def _route(chat_id, text: str) -> str:
 
     config = _load_config()
     active = trips.get_active_trips()
-    prompt = _build_router_prompt(text, state, config, active)
+    # The router's JSON contract goes in the prompt text itself, not only
+    # the system prompt — a resumed relay session doesn't reliably keep
+    # enforcing a system prompt from an earlier turn, and drifts into
+    # plain prose once the conversation runs past its first message.
+    prompt = f"{_ROUTER_TASK_PROMPT}\n\n{_build_router_prompt(text, state, config, active)}"
 
     try:
         parsed, session_id = _relay_turn(prompt, prompt, _ROUTER_TASK_PROMPT, state["session_id"])

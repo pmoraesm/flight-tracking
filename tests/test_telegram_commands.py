@@ -146,6 +146,27 @@ def test_revise_trip_resumes_session_without_resending_persona(tmp_path, monkeyp
     assert kwargs.get("system_prompt") is None
 
 
+def test_resumed_turn_still_carries_the_json_contract_instructions(tmp_path, monkeypatch):
+    """A resumed relay session doesn't reliably keep enforcing the first
+    turn's system_prompt — observed live, a resumed session drifted into
+    plain prose instead of JSON. Every turn must re-assert the contract
+    in the prompt text itself, not rely on session memory for it."""
+    _router_env(tmp_path, monkeypatch)
+
+    chat_id = 1
+    tc._pending[chat_id] = {"session_id": "sess-1", "trip_draft": None}
+
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": '{"action": "list_trips"}',
+        "session_id": "sess-1",
+    }) as mock_query:
+        tc._dispatch(chat_id, "what am I tracking?")
+
+    args, kwargs = mock_query.call_args
+    assert '"action"' in args[0]
+    assert "propose_trip" in args[0]
+
+
 def test_yes_confirms_pending_trip_without_calling_relay(tmp_path, monkeypatch):
     _router_env(tmp_path, monkeypatch)
 
