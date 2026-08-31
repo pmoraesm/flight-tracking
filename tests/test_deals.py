@@ -42,6 +42,15 @@ def test_cold_start_uses_baseline_discount():
     assert deals.is_good_deal(trip_id, 851, baseline_price_estimate=1000) is False
 
 
+def test_cold_start_baseline_scales_with_passenger_count():
+    trip_id = _make_trip()
+    _seed_prices(trip_id, [900, 950])  # only 2 samples, below the percentile minimum
+
+    # baseline is per-person (500); 2 passengers -> 1000 total, discount cut is 850
+    assert deals.is_good_deal(trip_id, 849, baseline_price_estimate=500, passenger_count=2) is True
+    assert deals.is_good_deal(trip_id, 999, baseline_price_estimate=500, passenger_count=2) is False
+
+
 def test_percentile_path_kicks_in_at_five_samples():
     trip_id = _make_trip()
     _seed_prices(trip_id, [100, 200, 300, 400, 500])

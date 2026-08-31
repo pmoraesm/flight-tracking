@@ -47,6 +47,7 @@ def run_check() -> None:
     for trip in active_trips:
         try:
             merged = trips.merge_with_defaults(trip, config)
+            passenger_count = merged["passengers"].get("adults", 1) + merged["passengers"].get("children", 0)
 
             for combo in tracker.search_flights(merged):
                 if not combo:
@@ -57,7 +58,8 @@ def run_check() -> None:
                     result["trip_description"] = trip["description"]
                     result["trip_id"] = trip["id"]
                     result["is_good_deal"] = deals.is_good_deal(
-                        trip["id"], result["price_value"], trip["baseline_price_estimate"]
+                        trip["id"], result["price_value"], trip["baseline_price_estimate"],
+                        passenger_count=passenger_count,
                     )
                     if result["is_good_deal"]:
                         all_alerts.append(result)

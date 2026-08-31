@@ -3,13 +3,13 @@ from unittest.mock import patch
 import main
 
 
-def _trip(trip_id=1, description="Beach trip", baseline=None):
+def _trip(trip_id=1, description="Beach trip", baseline=None, passengers=None):
     return {
         "id": trip_id, "description": description, "destinations": ["BKK"],
         "origins": None, "ideal_date": "2026-12-05", "ideal_return_date": "2026-12-19",
         "departure_range_before": 1, "departure_range_after": 1,
         "return_range_before": 1, "return_range_after": 1,
-        "seat": None, "passengers": None, "max_duration_hours": None,
+        "seat": None, "passengers": passengers, "max_duration_hours": None,
         "results_per_query": None, "baseline_price_estimate": baseline,
         "status": "active", "created_at": "2026-01-01T00:00:00+00:00",
     }
@@ -54,6 +54,25 @@ def test_run_check_tags_results_and_routes_good_deals_to_alerts():
     assert alerts_arg[0]["trip_description"] == "Beach trip"
 
     mock_notify_alerts.assert_called_once()
+
+
+def test_run_check_passes_total_passenger_count_to_is_good_deal():
+    trip = _trip(baseline=500, passengers={"adults": 2, "children": 1})
+    combo = [_result(1000)]
+
+    with patch("main.load_config", return_value={"origins": ["AMS"], "seat": "economy",
+                                                  "passengers": {}, "max_duration_hours": 0,
+                                                  "results_per_query": 3}), \
+         patch("main.trips.get_active_trips", return_value=[trip]), \
+         patch("main.tracker.search_flights", return_value=iter([combo])), \
+         patch("main.storage.write_results"), \
+         patch("main.deals.is_good_deal", return_value=False) as mock_is_good_deal, \
+         patch("main.display.print_results"), \
+         patch("main.display.print_alerts"), \
+         patch("main.is_configured", return_value=False):
+        main.run_check()
+
+    mock_is_good_deal.assert_called_once_with(1, 1000, 500, passenger_count=3)
 
 
 def test_run_check_skips_a_trip_that_raises_and_continues():

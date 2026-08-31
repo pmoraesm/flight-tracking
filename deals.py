@@ -20,13 +20,13 @@ def _historical_prices(trip_id: int) -> list:
     return [row[0] for row in rows]
 
 
-def is_good_deal(trip_id: int, price_value: float, baseline_price_estimate) -> bool:
+def is_good_deal(trip_id: int, price_value: float, baseline_price_estimate, passenger_count: int = 1) -> bool:
     history = _historical_prices(trip_id)
 
     if len(history) < MIN_HISTORY_FOR_PERCENTILE:
         if baseline_price_estimate is None:
             return False
-        return price_value <= baseline_price_estimate * BASELINE_DISCOUNT
+        return price_value <= baseline_price_estimate * passenger_count * BASELINE_DISCOUNT
 
     percentile_cut = statistics.quantiles(history, n=100)[PERCENTILE_THRESHOLD - 1]
     return price_value <= percentile_cut
