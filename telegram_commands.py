@@ -1,15 +1,19 @@
 """Telegram bot commands: slash commands for direct actions, and one
 relay-backed router for everything else.
 
-/new-trip and /set-config start a short conversation by asking a
-question; /cancel-trip, /trips, /get, /help act immediately. Every
-other message — including replies inside an open conversation — goes
-through _route(), which asks the Claude Code relay running on the same
-VPS to pick one action (propose or revise a trip, cancel a trip, list
-trips, edit or show the config, answer a question, or say it's
-unclear) and runs it. The relay's shared persona is sent once per
-chat (relay_client.PERSONA_PROMPT); every following turn resumes the
-same session instead of resending it.
+/new-trip, /set-config, and /analyze start a short conversation by
+asking a question; /cancel-trip, /trips, /get, /help act immediately.
+Every other message — including replies inside an open conversation —
+goes through _route(), which asks the Claude Code relay running on the
+same VPS to pick one action (propose or revise a trip, cancel a trip,
+list trips, edit or show the config, answer a question, analyze price
+history, or say it's unclear) and runs it. The relay's shared persona
+is sent once per chat (relay_client.PERSONA_PROMPT); every following
+turn resumes the same session instead of resending it. The "analyze"
+action instead starts a second, separate relay session — tracked in
+state["analysis_session_id"], independent of the router's own session
+— using its own persona (_ANALYSIS_PERSONA_PROMPT) that grants
+read-only SQL access.
 """
 
 import logging
@@ -128,10 +132,12 @@ _ANALYSIS_PERSONA_PROMPT = (
     "TEXT, price_value DOUBLE PRECISION, is_best BOOLEAN, trip_id INT "
     "REFERENCES trips)`\n\n"
     "Answer the user's question by querying this data. Use SELECT "
-    "only — you have no write access, and none is needed. If the "
-    "database is unreachable or a query fails, say so plainly in your "
-    "reply rather than retrying indefinitely. Respond with nothing "
-    'but a single JSON object: {"reply": "text"}.'
+    "only — you have no write access, and none is needed. Use the "
+    "shell only to run `psql` queries against this database — do not "
+    "read or modify files, install anything, or run any other "
+    "command. If the database is unreachable or a query fails, say so "
+    "plainly in your reply rather than retrying indefinitely. Respond "
+    'with nothing but a single JSON object: {"reply": "text"}.'
 )
 
 _pending: dict = {}
@@ -436,9 +442,15 @@ def _execute_action(state: dict, parsed: dict, config: dict) -> str:
 
     if action == "analyze":
         query_text = parsed.get("query", "")
+        if not query_text:
+            return "What would you like to know about your price history?"
+        analysis_prompt = (
+            f'{query_text}\n\nRespond with nothing but a single JSON object: '
+            '{"reply": "text"}.'
+        )
         try:
             analysis_result, analysis_session_id = _relay_turn(
-                query_text, query_text, _ANALYSIS_PERSONA_PROMPT,
+                analysis_prompt, analysis_prompt, _ANALYSIS_PERSONA_PROMPT,
                 state.get("analysis_session_id"), persona="",
             )
         except Exception as exc:

@@ -757,7 +757,7 @@ def test_analyze_action_starts_separate_analysis_session(tmp_path, monkeypatch):
     assert mock_query.call_count == 2
 
     analysis_args, analysis_kwargs = mock_query.call_args_list[1]
-    assert analysis_args[0] == "What was the cheapest fare to GRU?"
+    assert "What was the cheapest fare to GRU?" in analysis_args[0]
     assert analysis_kwargs["system_prompt"] == tc._ANALYSIS_PERSONA_PROMPT
 
 
@@ -785,6 +785,50 @@ def test_analyze_action_resumes_existing_analysis_session(tmp_path, monkeypatch)
     analysis_args, analysis_kwargs = mock_query.call_args_list[1]
     assert analysis_kwargs["session_id"] == "sess-analysis-1"
     assert "system_prompt" not in analysis_kwargs
+
+
+def test_analyze_resumed_turn_still_carries_the_json_contract_instructions(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    chat_id = 5
+    tc._pending[chat_id] = {
+        "session_id": "sess-router-1", "trip_draft": None, "trip_draft_id": None,
+        "analysis_session_id": "sess-analysis-1",
+    }
+
+    responses = [
+        {"result": '{"action": "analyze", "query": "And the most expensive one?"}', "session_id": "sess-router-1"},
+        {"result": '{"reply": "The most expensive fare was 900."}', "session_id": "sess-analysis-1"},
+    ]
+
+    def fake_query(*args, **kwargs):
+        return responses.pop(0)
+
+    with patch("telegram_commands.relay_client.query", side_effect=fake_query) as mock_query:
+        tc._dispatch(chat_id, "and the most expensive one?")
+
+    analysis_args, analysis_kwargs = mock_query.call_args_list[1]
+    assert '"reply"' in analysis_args[0]
+    assert "system_prompt" not in analysis_kwargs
+
+
+def test_analyze_action_empty_query_asks_for_clarification(tmp_path, monkeypatch):
+    _router_env(tmp_path, monkeypatch)
+
+    chat_id = 5
+    with patch("telegram_commands.relay_client.query", return_value={
+        "result": '{"action": "analyze"}', "session_id": "sess-router-1",
+    }) as mock_query:
+        reply = tc._dispatch(chat_id, "tell me about my trips")
+
+    assert reply == "What would you like to know about your price history?"
+    assert mock_query.call_count == 1
+    assert tc._pending[chat_id]["analysis_session_id"] is None
+
+
+def test_analysis_persona_restricts_shell_to_psql_only():
+    assert "psql" in tc._ANALYSIS_PERSONA_PROMPT
+    assert "do not read or modify files" in tc._ANALYSIS_PERSONA_PROMPT
 
 
 def test_analyze_action_malformed_output_falls_back(tmp_path, monkeypatch):
