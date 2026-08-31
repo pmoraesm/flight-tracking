@@ -1,10 +1,11 @@
-"""Trip requests: schema, CRUD, default-merging, and legacy config migration."""
+"""Trip requests: CRUD, default-merging, and legacy config migration."""
 
-import json
 import logging
-import sqlite3
 from datetime import date, datetime, timezone
 
+import psycopg
+from psycopg.rows import dict_row
+from psycopg.types.json import Json
 from ruamel.yaml import YAML
 
 import storage
@@ -12,28 +13,6 @@ import storage
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = storage.DATABASE_URL
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS trips (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-    description             TEXT NOT NULL,
-    destinations            TEXT NOT NULL,
-    origins                 TEXT,
-    ideal_date              TEXT NOT NULL,
-    ideal_return_date       TEXT NOT NULL,
-    departure_range_before  INTEGER NOT NULL,
-    departure_range_after   INTEGER NOT NULL,
-    return_range_before     INTEGER NOT NULL,
-    return_range_after      INTEGER NOT NULL,
-    seat                    TEXT,
-    passengers              TEXT,
-    max_duration_hours      INTEGER,
-    results_per_query       INTEGER,
-    baseline_price_estimate REAL,
-    status                  TEXT NOT NULL DEFAULT 'active',
-    created_at              TEXT NOT NULL
-);
-"""
 
 _LEGACY_KEYS = (
     "destination", "ideal_date", "ideal_return_date",
@@ -45,25 +24,15 @@ _LEGACY_KEYS = (
 _yaml = YAML()
 _yaml.preserve_quotes = True
 
-_initialized = False
+
+def _get_connection() -> psycopg.Connection:
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
 
-def _get_connection() -> sqlite3.Connection:
-    global _initialized
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    if not _initialized:
-        conn.executescript(_SCHEMA)
-        conn.commit()
-        _initialized = True
-    return conn
-
-
-def _row_to_trip(row: sqlite3.Row) -> dict:
+def _row_to_trip(row: dict) -> dict:
     trip = dict(row)
-    trip["destinations"] = json.loads(trip["destinations"])
-    trip["origins"] = json.loads(trip["origins"]) if trip["origins"] else None
-    trip["passengers"] = json.loads(trip["passengers"]) if trip["passengers"] else None
+    trip["ideal_date"] = trip["ideal_date"].isoformat()
+    trip["ideal_return_date"] = trip["ideal_return_date"].isoformat()
     return trip
 
 
@@ -84,7 +53,7 @@ def create_trip(
     baseline_price_estimate=None,
 ) -> int:
     conn = _get_connection()
-    cur = conn.execute(
+    row = conn.execute(
         """
         INSERT INTO trips (
             description, destinations, origins, ideal_date, ideal_return_date,
@@ -92,12 +61,13 @@ def create_trip(
             return_range_before, return_range_after,
             seat, passengers, max_duration_hours, results_per_query,
             baseline_price_estimate, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s)
+        RETURNING id
         """,
         (
             description,
-            json.dumps(destinations),
-            json.dumps(origins) if origins else None,
+            Json(destinations),
+            Json(origins) if origins else None,
             ideal_date,
             ideal_return_date,
             departure_range_before,
@@ -105,22 +75,22 @@ def create_trip(
             return_range_before,
             return_range_after,
             seat,
-            json.dumps(passengers) if passengers else None,
+            Json(passengers) if passengers else None,
             max_duration_hours,
             results_per_query,
             baseline_price_estimate,
             datetime.now(timezone.utc).isoformat(),
         ),
-    )
+    ).fetchone()
     conn.commit()
-    trip_id = cur.lastrowid
+    trip_id = row["id"]
     conn.close()
     return trip_id
 
 
 def get_trip(trip_id: int):
     conn = _get_connection()
-    row = conn.execute("SELECT * FROM trips WHERE id = ?", (trip_id,)).fetchone()
+    row = conn.execute("SELECT * FROM trips WHERE id = %s", (trip_id,)).fetchone()
     conn.close()
     return _row_to_trip(row) if row else None
 
@@ -147,7 +117,7 @@ def get_inactive_trips() -> list:
 def cancel_trip(trip_id: int) -> bool:
     conn = _get_connection()
     cur = conn.execute(
-        "UPDATE trips SET status = 'cancelled' WHERE id = ? AND status = 'active'",
+        "UPDATE trips SET status = 'cancelled' WHERE id = %s AND status = 'active'",
         (trip_id,),
     )
     conn.commit()
@@ -176,16 +146,16 @@ def update_trip(
     cur = conn.execute(
         """
         UPDATE trips SET
-            description = ?, destinations = ?, origins = ?, ideal_date = ?,
-            ideal_return_date = ?, departure_range_before = ?, departure_range_after = ?,
-            return_range_before = ?, return_range_after = ?, seat = ?, passengers = ?,
-            max_duration_hours = ?, results_per_query = ?, baseline_price_estimate = ?
-        WHERE id = ? AND status = 'active'
+            description = %s, destinations = %s, origins = %s, ideal_date = %s,
+            ideal_return_date = %s, departure_range_before = %s, departure_range_after = %s,
+            return_range_before = %s, return_range_after = %s, seat = %s, passengers = %s,
+            max_duration_hours = %s, results_per_query = %s, baseline_price_estimate = %s
+        WHERE id = %s AND status = 'active'
         """,
         (
             description,
-            json.dumps(destinations),
-            json.dumps(origins) if origins else None,
+            Json(destinations),
+            Json(origins) if origins else None,
             ideal_date,
             ideal_return_date,
             departure_range_before,
@@ -193,7 +163,7 @@ def update_trip(
             return_range_before,
             return_range_after,
             seat,
-            json.dumps(passengers) if passengers else None,
+            Json(passengers) if passengers else None,
             max_duration_hours,
             results_per_query,
             baseline_price_estimate,
@@ -206,22 +176,21 @@ def update_trip(
 
 
 def _expire_overdue_trips(today=None) -> None:
-    today = today or date.today().isoformat()
-    today_ordinal = date.fromisoformat(today).toordinal()
+    today = today or date.today()
+    today_ordinal = today.toordinal()
 
     conn = _get_connection()
     rows = conn.execute(
         "SELECT id, ideal_return_date, return_range_after FROM trips WHERE status = 'active'"
     ).fetchall()
     for row in rows:
-        last_return = date.fromisoformat(row["ideal_return_date"])
-        cutoff = last_return.toordinal() + row["return_range_after"]
+        cutoff = row["ideal_return_date"].toordinal() + row["return_range_after"]
         if cutoff < today_ordinal:
             logger.warning(
                 "Trip #%s expired (return window ended %s + %s days)",
                 row["id"], row["ideal_return_date"], row["return_range_after"],
             )
-            conn.execute("UPDATE trips SET status = 'expired' WHERE id = ?", (row["id"],))
+            conn.execute("UPDATE trips SET status = 'expired' WHERE id = %s", (row["id"],))
     conn.commit()
     conn.close()
 

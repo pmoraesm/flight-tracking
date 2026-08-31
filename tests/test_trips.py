@@ -1,18 +1,6 @@
 from datetime import date, timedelta
 
-import pytest
-
-import storage
 import trips
-
-
-@pytest.fixture(autouse=True)
-def scratch_db(tmp_path, monkeypatch):
-    db_path = tmp_path / "test_prices.db"
-    monkeypatch.setattr(storage, "DB_PATH", db_path)
-    monkeypatch.setattr(trips, "DB_PATH", db_path)
-    monkeypatch.setattr(trips, "_initialized", False)
-    yield db_path
 
 
 def _create(**overrides):
@@ -37,6 +25,16 @@ def test_create_and_get_trip_round_trips_fields():
     assert trip["origins"] is None
     assert trip["passengers"] == {"adults": 2}
     assert trip["status"] == "active"
+
+
+def test_get_trip_returns_ideal_dates_as_plain_strings():
+    trip_id = _create(ideal_date="2026-12-05", ideal_return_date="2026-12-19")
+
+    trip = trips.get_trip(trip_id)
+
+    assert trip["ideal_date"] == "2026-12-05"
+    assert trip["ideal_return_date"] == "2026-12-19"
+    assert isinstance(trip["ideal_date"], str)
 
 
 def test_get_trip_returns_none_for_unknown_id():
