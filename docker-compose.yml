@@ -3,7 +3,7 @@ services:
     build: .
     container_name: flight-tracker
     restart: unless-stopped
-    network_mode: bridge
+    networks: [platform]
     env_file:
       - .env
     volumes:
@@ -27,3 +27,7 @@ services:
 volumes:
   flight-data:
   flight-tracker-postgres-data:
+
+networks:
+  platform:
+    external: true
